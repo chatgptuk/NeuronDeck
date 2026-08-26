@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_MODEL_ID,
   FALLBACK_MODELS,
   formatContextWindow,
   searchModels,
@@ -8,6 +9,11 @@ import {
 } from "./models";
 
 describe("Cloudflare-hosted chat catalog", () => {
+  it("uses Kimi K2.7 Code as the default model", () => {
+    expect(DEFAULT_MODEL_ID).toBe("@cf/moonshotai/kimi-k2.7-code");
+    expect(FALLBACK_MODELS.some((model) => model.id === DEFAULT_MODEL_ID)).toBe(true);
+  });
+
   it("contains the complete synced chat catalog without the safety classifier", () => {
     expect(FALLBACK_MODELS).toHaveLength(28);
     expect(FALLBACK_MODELS.every((model) => model.id.startsWith("@cf/"))).toBe(true);

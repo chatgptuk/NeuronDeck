@@ -31,6 +31,25 @@ export interface Attachment {
   truncated?: boolean;
 }
 
+export interface GeneratedImage {
+  id: string;
+  dataUrl: string;
+  modelId: string;
+  modelName: string;
+  prompt: string;
+  width: number;
+  height: number;
+  seed?: number;
+}
+
+export interface ImageGenerationState {
+  status: "generating" | "complete" | "error";
+  modelId: string;
+  modelName: string;
+  prompt?: string;
+  message?: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: MessageRole;
@@ -41,6 +60,8 @@ export interface ChatMessage {
   status?: "streaming" | "complete" | "error";
   elapsedMs?: number;
   attachments?: Attachment[];
+  generatedImages?: GeneratedImage[];
+  imageGeneration?: ImageGenerationState;
 }
 
 export interface Conversation {
@@ -51,6 +72,7 @@ export interface Conversation {
   temperature: number;
   maxTokens: number;
   maxTokensCustomized?: boolean;
+  imageModelId: string;
   messages: ChatMessage[];
   createdAt: string;
   updatedAt: string;
@@ -68,4 +90,6 @@ export interface StreamEvent {
   done?: boolean;
   usage?: Record<string, number>;
   error?: string;
+  generatedImage?: GeneratedImage;
+  imageGeneration?: ImageGenerationState;
 }

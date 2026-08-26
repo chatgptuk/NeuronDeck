@@ -4,7 +4,7 @@ import type { ModelInfo } from "../types";
 
 export const FALLBACK_MODELS = catalog.models as ModelInfo[];
 export const CATALOG_SYNCED_AT = catalog.syncedAt;
-export const DEFAULT_MODEL_ID = "@cf/zai-org/glm-4.7-flash";
+export const DEFAULT_MODEL_ID = "@cf/moonshotai/kimi-k2.7-code";
 
 export const getModel = (models: ModelInfo[], id: string): ModelInfo =>
   models.find((model) => model.id === id) ?? models[0] ?? FALLBACK_MODELS[0];

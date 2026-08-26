@@ -20,6 +20,7 @@ import {
   Square,
   Sun,
   Trash2,
+  WandSparkles,
   X,
 } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -54,8 +55,15 @@ import {
 } from "./lib/attachments";
 import { consumeChatStream } from "./lib/stream";
 import { loadWorkspace, saveWorkspace } from "./lib/storage";
-import type { Attachment, ChatMessage, Conversation, ModelInfo, WorkspaceState } from "./types";
+import {
+  DEFAULT_IMAGE_MODEL_ID,
+  getImageModel,
+  IMAGE_MODELS,
+  isImageModelId,
+} from "./lib/image-models";
+import type { Attachment, ChatMessage, Conversation, GeneratedImage, ModelInfo, WorkspaceState } from "./types";
 import { AttachmentStrip } from "./components/AttachmentStrip";
+import { GeneratedImageGallery } from "./components/GeneratedImageGallery";
 
 const MarkdownMessage = lazy(() =>
   import("./components/MarkdownMessage").then((module) => ({ default: module.MarkdownMessage })),
@@ -95,7 +103,11 @@ const pruneAttachmentsForRequest = (messages: ChatMessage[], modelId: string): C
     .reverse();
 };
 
-const createConversation = (language: Language, modelId = DEFAULT_MODEL_ID): Conversation => {
+const createConversation = (
+  language: Language,
+  modelId = DEFAULT_MODEL_ID,
+  imageModelId = DEFAULT_IMAGE_MODEL_ID,
+): Conversation => {
   const timestamp = now();
   const t = translations[language];
   const outputTokenPolicy = getOutputTokenPolicyForModel(modelId);
@@ -107,6 +119,7 @@ const createConversation = (language: Language, modelId = DEFAULT_MODEL_ID): Con
     temperature: 0.6,
     maxTokens: outputTokenPolicy.recommended,
     maxTokensCustomized: false,
+    imageModelId,
     messages: [],
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -167,6 +180,8 @@ function App() {
     workspace.conversations[0];
   const activeModel = getModel(models, activeConversation.modelId);
   const activeModelSupportsAttachments = supportsMultimodalAttachments(activeModel);
+  const activeModelSupportsTools = activeModel.capabilities.includes("tools");
+  const activeImageModel = getImageModel(activeConversation.imageModelId);
   const activeOutputTokenPolicy = getOutputTokenPolicy(activeModel.contextWindow);
   const attachmentTarget = `${activeConversation.id}:${activeModel.id}`;
   const attachmentTargetRef = useRef(attachmentTarget);
@@ -187,6 +202,9 @@ function App() {
           return {
             ...conversation,
             modelId,
+            imageModelId: isImageModelId(conversation.imageModelId)
+              ? conversation.imageModelId
+              : DEFAULT_IMAGE_MODEL_ID,
             maxTokens: maxTokensCustomized
               ? clampOutputTokens(conversation.maxTokens, outputTokenPolicy)
               : outputTokenPolicy.recommended,
@@ -305,6 +323,7 @@ function App() {
       const startedAt = performance.now();
       let content = "";
       let reasoning = "";
+      let generatedImages: GeneratedImage[] = [];
 
       const requestMessages = pruneAttachmentsForRequest(contextMessages, conversation.modelId);
       const apiMessages = [
@@ -331,6 +350,7 @@ function App() {
             messages: apiMessages,
             temperature: conversation.temperature,
             maxTokens: conversation.maxTokens,
+            imageModel: conversation.imageModelId,
           }),
           signal: controller.signal,
         });
@@ -350,11 +370,22 @@ function App() {
           }
           if (event.content) content += event.content;
           if (event.reasoning) reasoning += event.reasoning;
-          if (event.content || event.reasoning) {
+          if (event.generatedImage) generatedImages = [...generatedImages, event.generatedImage];
+          if (event.content || event.reasoning || event.generatedImage || event.imageGeneration) {
             updateMessage(conversation.id, assistantId, (message) => ({
               ...message,
               content,
               reasoning,
+              generatedImages,
+              imageGeneration: event.imageGeneration ??
+                (event.generatedImage
+                  ? {
+                      status: "complete",
+                      modelId: event.generatedImage.modelId,
+                      modelName: event.generatedImage.modelName,
+                      prompt: event.generatedImage.prompt,
+                    }
+                  : message.imageGeneration),
               status: "streaming",
             }));
           }
@@ -362,8 +393,9 @@ function App() {
 
         updateMessage(conversation.id, assistantId, (message) => ({
           ...message,
-          content: content || t.emptyCompletion,
+          content: content || (generatedImages.length ? t.imageGeneratedFallback : t.emptyCompletion),
           reasoning,
+          generatedImages,
           status: "complete",
           elapsedMs: Math.round(performance.now() - startedAt),
         }));
@@ -378,6 +410,7 @@ function App() {
           ...current,
           content: message,
           reasoning,
+          generatedImages,
           status: stopped ? "complete" : "error",
           elapsedMs: Math.round(performance.now() - startedAt),
         }));
@@ -386,7 +419,15 @@ function App() {
         setGenerating(false);
       }
     },
-    [language, t.emptyCompletion, t.generationFailed, t.generationStopped, t.requestFailed, updateMessage],
+    [
+      language,
+      t.emptyCompletion,
+      t.generationFailed,
+      t.generationStopped,
+      t.imageGeneratedFallback,
+      t.requestFailed,
+      updateMessage,
+    ],
   );
 
   const sendMessage = useCallback(async () => {
@@ -587,7 +628,7 @@ function App() {
   };
 
   const newConversation = () => {
-    const conversation = createConversation(language, activeConversation.modelId);
+    const conversation = createConversation(language, activeConversation.modelId, activeConversation.imageModelId);
     setWorkspace((current) => ({
       ...current,
       conversations: [conversation, ...current.conversations],
@@ -632,6 +673,13 @@ function App() {
         "",
         ...(message.attachments?.length
           ? [`${t.attachmentList}: ${message.attachments.map((attachment) => attachment.name).join(", ")}`, ""]
+          : []),
+        ...(message.generatedImages?.length
+          ? message.generatedImages.flatMap((image) => [
+              `${t.imageModel}: ${image.modelName}`,
+              `${image.width} × ${image.height} · ${image.prompt}`,
+              "",
+            ])
           : []),
         message.content,
         "",
@@ -827,6 +875,11 @@ function App() {
                         {message.attachments?.length ? (
                           <AttachmentStrip attachments={message.attachments} language={language} />
                         ) : null}
+                        <GeneratedImageGallery
+                          images={message.generatedImages}
+                          state={message.imageGeneration}
+                          language={language}
+                        />
                         {message.reasoning && (
                           <details className="reasoning-block">
                             <summary>{t.reasoningTrace}</summary>
@@ -841,9 +894,11 @@ function App() {
                           <Suspense fallback={<p>{message.content}</p>}>
                             <MarkdownMessage content={message.content} language={language} />
                           </Suspense>
-                        ) : <div className="typing"><span /><span /><span /></div>}
+                        ) : message.imageGeneration || message.generatedImages?.length ? null : (
+                          <div className="typing"><span /><span /><span /></div>
+                        )}
                       </div>
-                      {message.content && message.status !== "streaming" && (
+                      {(message.content || message.generatedImages?.length) && message.status !== "streaming" && (
                         <div className="message-actions">
                           <button onClick={() => void copyMessage(message)} type="button">
                             {copiedMessageId === message.id ? <Check size={14} /> : <Copy size={14} />}
@@ -916,6 +971,9 @@ function App() {
                     ) : null}
                     <div className="composer-badges">
                       <button onClick={() => setModelPickerOpen(true)} type="button"><span className="model-dot" />{activeModel.name}</button>
+                      {activeModelSupportsTools ? (
+                        <span className="image-tool-badge"><WandSparkles size={12} />{t.imageToolBadge(activeImageModel.name)}</span>
+                      ) : null}
                       <span>{formatContextWindow(activeModel.contextWindow, language)}</span>
                     </div>
                   </div>
@@ -1006,6 +1064,46 @@ function App() {
                 >{t.resetOutputTokens}</button>
               </div>
             </div>
+            {activeModelSupportsTools ? (
+              <div className="inspector-section image-model-section">
+                <span className="section-title"><WandSparkles size={14} />{t.imageModel}</span>
+                <p>{t.imageModelDescription}</p>
+                <div className="image-model-options" role="radiogroup" aria-label={t.imageModel}>
+                  {IMAGE_MODELS.map((imageModel) => {
+                    const selected = activeConversation.imageModelId === imageModel.id;
+                    return (
+                      <button
+                        className={selected ? "image-model-option selected" : "image-model-option"}
+                        key={imageModel.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        onClick={() => updateConversation(activeConversation.id, (conversation) => ({
+                          ...conversation,
+                          imageModelId: imageModel.id,
+                          updatedAt: now(),
+                        }))}
+                      >
+                        <span className={`image-provider-mark ${imageModel.provider === "Leonardo" ? "leonardo" : "flux"}`}>
+                          {imageModel.provider === "Leonardo" ? "L" : (
+                            <svg aria-hidden="true" viewBox="0 0 24 24">
+                              <path d="M0 20.7 12 2.5l12 18.2h-2.2L12 5.9 3.5 18.8h12.1l1.2 1.9Z" />
+                              <path d="m8.1 16.7 2-3.1 2.1 3.1Zm10.1 4-5.6-8.7h2.1l5.7 8.7Z" />
+                            </svg>
+                          )}
+                        </span>
+                        <span className="image-model-copy">
+                          <strong>{imageModel.name}{imageModel.id === DEFAULT_IMAGE_MODEL_ID ? <em>{t.imageModelDefault}</em> : null}</strong>
+                          <small>{imageModel.summary[language]}</small>
+                          <i>{imageModel.price[language]}</i>
+                        </span>
+                        <span className="image-model-check">{selected ? <Check size={14} /> : null}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
             <div className="inspector-section">
               <span className="section-title">{t.capabilities}</span>
               <div className="inspector-capabilities">

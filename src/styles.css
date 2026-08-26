@@ -353,6 +353,41 @@ input:focus-visible {
 .typing span:nth-child(2) { animation-delay: 120ms; }
 .typing span:nth-child(3) { animation-delay: 240ms; }
 
+.image-generation-status {
+  display: flex;
+  width: min(520px, 100%);
+  min-height: 72px;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 16px;
+  border: 1px solid color-mix(in srgb, var(--accent) 15%, var(--line));
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 9% 10%, color-mix(in srgb, var(--accent-soft) 85%, transparent), transparent 45%),
+    var(--panel-raised);
+  box-shadow: 0 12px 34px rgba(48, 75, 61, 0.07);
+  padding: 13px 15px;
+}
+.image-generation-status.error { border-color: color-mix(in srgb, var(--danger) 24%, var(--line)); }
+.image-generation-glow { display: grid; width: 42px; height: 42px; flex: 0 0 42px; place-items: center; border-radius: 15px 19px 15px 19px; background: var(--accent-soft); color: var(--accent-bright); box-shadow: inset 0 0 0 1px rgba(86, 134, 113, 0.08); }
+.image-generation-status > span:nth-child(2) { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 4px; line-height: 1.35; }
+.image-generation-status strong { font-size: 11px; font-weight: 680; }
+.image-generation-status small { overflow: hidden; color: var(--muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.image-generation-status > i { display: flex; align-items: center; gap: 4px; }
+.image-generation-status > i span { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); animation: pulse 1.15s ease-in-out infinite; }
+.image-generation-status > i span:nth-child(2) { animation-delay: 120ms; }
+.image-generation-status > i span:nth-child(3) { animation-delay: 240ms; }
+.generated-image-grid { display: grid; width: min(680px, 100%); gap: 12px; margin: 0 0 18px; }
+.generated-image { position: relative; margin: 0; border: 1px solid rgba(50, 71, 61, 0.12); border-radius: 24px; background: #dfe5df; box-shadow: 0 22px 48px rgba(42, 62, 52, 0.13); overflow: hidden; }
+.generated-image > img { display: block; width: 100%; max-height: 720px; object-fit: contain; }
+.generated-image figcaption { position: absolute; display: flex; align-items: flex-end; gap: 14px; right: 0; bottom: 0; left: 0; padding: 54px 14px 14px; background: linear-gradient(transparent, rgba(16, 24, 20, 0.78)); color: #f8fbf9; }
+.generated-image figcaption > span:first-child { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 3px; }
+.generated-image figcaption strong { font-size: 10px; font-weight: 680; }
+.generated-image figcaption small { overflow: hidden; color: rgba(244, 249, 246, 0.7); font-size: 8px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
+.generated-image-actions { display: flex; flex: 0 0 auto; gap: 6px; }
+.generated-image-actions a { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 11px; background: rgba(255, 255, 255, 0.1); color: #fff; backdrop-filter: blur(10px); }
+.generated-image-actions a:hover { background: rgba(255, 255, 255, 0.2); }
+
 @keyframes pulse {
   0%, 70%, 100% { opacity: 0.22; transform: translateY(0); }
   35% { opacity: 1; transform: translateY(-3px); }
@@ -391,6 +426,7 @@ input:focus-visible {
 .composer-badges > span { display: flex; align-items: center; gap: 7px; border: 0; border-radius: 10px; background: transparent; padding: 6px 7px; color: var(--muted-strong); font-size: 8px; }
 .composer-badges button { max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer-badges button:hover { background: var(--panel-soft); color: var(--text); }
+.composer-badges > span.image-tool-badge { color: var(--accent-bright); }
 .send-button { display: grid; width: 36px; height: 36px; place-items: center; margin-left: auto; border: 0; border-radius: 13px; background: var(--accent-bright); color: #f7fbf8; box-shadow: 0 8px 20px rgba(54, 106, 83, 0.21); transition: transform 150ms ease, box-shadow 150ms ease; }
 .send-button:not(:disabled):hover { box-shadow: 0 11px 25px rgba(54, 106, 83, 0.26); transform: translateY(-1px); }
 .send-button:disabled { cursor: default; opacity: 0.22; box-shadow: none; }
@@ -430,6 +466,20 @@ input:focus-visible {
 .number-hint { display: flex; align-items: flex-start; gap: 10px; margin-top: 8px; color: var(--muted); font-size: 8px; line-height: 1.45; }
 .number-hint span { flex: 1; }
 .number-hint button { flex: 0 0 auto; border: 0; border-bottom: 1px solid color-mix(in srgb, var(--accent) 32%, transparent); background: transparent; padding: 0 0 2px; color: var(--accent-bright); font-size: inherit; }
+.image-model-section > p { margin: -1px 0 11px; color: var(--muted); font-size: 8px; line-height: 1.55; }
+.image-model-options { display: flex; flex-direction: column; gap: 6px; }
+.image-model-option { display: flex; width: 100%; min-width: 0; align-items: center; gap: 10px; border: 1px solid transparent; border-radius: 15px; background: transparent; padding: 9px 8px; text-align: left; transition: border-color 150ms ease, background 150ms ease, transform 150ms ease; }
+.image-model-option:hover { background: var(--panel-soft); transform: translateY(-1px); }
+.image-model-option.selected { border-color: color-mix(in srgb, var(--accent) 18%, var(--line)); background: var(--accent-pale); }
+.image-provider-mark { display: grid; width: 36px; height: 36px; flex: 0 0 36px; place-items: center; border: 1px solid var(--line); border-radius: 12px 15px 12px 15px; background: var(--panel-raised); color: var(--text); font-family: "Iowan Old Style", Georgia, serif; font-size: 14px; font-weight: 700; }
+.image-provider-mark svg { width: 19px; height: 19px; fill: currentColor; }
+.image-provider-mark.leonardo { background: conic-gradient(from 210deg, #415ff2, #ac45df, #f18443, #f1d75a, #42b7ae, #415ff2); color: white; box-shadow: inset 0 0 0 4px color-mix(in srgb, var(--panel-raised) 80%, transparent); }
+.image-model-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 3px; }
+.image-model-copy strong { display: flex; align-items: center; gap: 6px; font-size: 9px; font-weight: 680; }
+.image-model-copy strong em { border-radius: 999px; background: var(--accent-soft); padding: 2px 5px; color: var(--accent-bright); font-size: 6px; font-style: normal; font-weight: 650; }
+.image-model-copy small { overflow: hidden; color: var(--muted-strong); font-size: 7px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+.image-model-copy i { color: var(--muted); font-size: 6px; font-style: normal; }
+.image-model-check { display: grid; width: 22px; height: 22px; flex: 0 0 22px; place-items: center; border-radius: 50%; color: var(--accent-bright); }
 .inspector-capabilities { display: flex; flex-wrap: wrap; gap: 6px; }
 .inspector-capabilities span { border: 1px solid var(--line); border-radius: 999px; background: var(--accent-pale); padding: 6px 9px; color: var(--muted-strong); font-size: 8px; }
 .inspector-capabilities span.paid { border-color: color-mix(in srgb, var(--amber) 24%, transparent); color: var(--amber); }
@@ -535,6 +585,11 @@ input:focus-visible {
   .code-copy { font-size: 10px; }
   .reasoning-block { font-size: 13px; line-height: 1.68; }
   .reasoning-block summary { font-size: 11px; }
+  .image-generation-status strong { font-size: 13px; }
+  .image-generation-status small { font-size: 11px; }
+  .generated-image { border-radius: 20px; }
+  .generated-image figcaption strong { font-size: 12px; }
+  .generated-image figcaption small { font-size: 10px; }
   .attachment-meta strong { font-size: 12px; }
   .attachment-meta span { font-size: 10px; }
   .composer-wrap { width: calc(100% - 22px); padding-bottom: 12px; }
@@ -555,6 +610,11 @@ input:focus-visible {
   .range-label output { font-size: 12px; }
   .range-hints { font-size: 10px; }
   .number-hint { font-size: 10px; line-height: 1.55; }
+  .image-model-section > p { font-size: 10px; }
+  .image-model-copy strong { font-size: 12px; }
+  .image-model-copy strong em { font-size: 8px; }
+  .image-model-copy small { font-size: 10px; }
+  .image-model-copy i { font-size: 9px; }
   .inspector-capabilities span { font-size: 10px; }
   .change-model { font-size: 12px; }
   .composer textarea,

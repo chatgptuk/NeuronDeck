@@ -1,10 +1,16 @@
-import type { StreamEvent } from "../types";
+import type { GeneratedImage, ImageGenerationState, StreamEvent } from "../types";
 
 const getNestedContent = (value: unknown): StreamEvent => {
   if (typeof value === "string") return { content: value };
   if (!value || typeof value !== "object") return {};
 
   const data = value as Record<string, unknown>;
+  if (data.generated_image && typeof data.generated_image === "object") {
+    return { generatedImage: data.generated_image as GeneratedImage };
+  }
+  if (data.image_generation && typeof data.image_generation === "object") {
+    return { imageGeneration: data.image_generation as ImageGenerationState };
+  }
   if (typeof data.response === "string") return { content: data.response };
   if (typeof data.content === "string") return { content: data.content };
   if (typeof data.reasoning === "string") return { reasoning: data.reasoning };
