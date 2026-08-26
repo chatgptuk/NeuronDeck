@@ -85,6 +85,29 @@ const ModelPicker = lazy(() =>
 
 const id = (): string => crypto.randomUUID();
 const now = (): string => new Date().toISOString();
+const normalizeComposerText = (value: string): string => value.replace(/\r\n?/g, "\n");
+const insertComposerText = (editor: HTMLDivElement, value: string): string => {
+  const selection = window.getSelection();
+  if (!selection) return normalizeComposerText(editor.innerText);
+
+  let range: Range;
+  if (selection.rangeCount && editor.contains(selection.anchorNode)) {
+    range = selection.getRangeAt(0);
+    range.deleteContents();
+  } else {
+    range = document.createRange();
+    range.selectNodeContents(editor);
+    range.collapse(false);
+  }
+
+  const textNode = document.createTextNode(normalizeComposerText(value));
+  range.insertNode(textNode);
+  range.setStartAfter(textNode);
+  range.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  return normalizeComposerText(editor.innerText);
+};
 const LEGACY_VISION_MODEL_ID = "@cf/meta/llama-3.2-11b-vision-instruct";
 const MAX_CONTEXT_ATTACHMENTS = 8;
 const STARTER_ICONS = [IdeaGlyph, CodeGlyph, PerspectiveGlyph] as const;
@@ -184,7 +207,7 @@ function App() {
     () => (localStorage.getItem("neurondeck-theme-v2") as "dark" | "light" | null) ?? "light",
   );
   const abortRef = useRef<AbortController | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const composerEditorRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const messageEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -207,16 +230,9 @@ function App() {
   }, [revealedTimeMessageId]);
 
   useLayoutEffect(() => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-
-    textarea.style.height = "auto";
-    const maxHeight = Number.parseFloat(window.getComputedStyle(textarea).maxHeight);
-    const nextHeight = Number.isFinite(maxHeight)
-      ? Math.min(textarea.scrollHeight, maxHeight)
-      : textarea.scrollHeight;
-    textarea.style.height = `${nextHeight}px`;
-    textarea.style.overflowY = textarea.scrollHeight > nextHeight ? "auto" : "hidden";
+    const editor = composerEditorRef.current;
+    if (!editor || editor.innerText === composer) return;
+    editor.innerText = composer;
   }, [composer]);
 
   useEffect(() => {
@@ -572,7 +588,7 @@ function App() {
       messages: conversation.messages.slice(0, index),
       updatedAt: now(),
     }));
-    window.setTimeout(() => textareaRef.current?.focus(), 0);
+    window.setTimeout(() => composerEditorRef.current?.focus(), 0);
   };
 
   const copyMessage = async (message: ChatMessage) => {
@@ -906,7 +922,7 @@ function App() {
                       return (
                         <button key={item.label} type="button" onClick={() => {
                           setComposer(item.prompt);
-                          textareaRef.current?.focus();
+                          window.setTimeout(() => composerEditorRef.current?.focus(), 0);
                         }}>
                           <span className="starter-icon"><StarterIcon /></span>
                           <strong>{item.label}</strong>
@@ -1012,33 +1028,37 @@ function App() {
                     ) : null}
                   </>
                 ) : null}
-                <textarea
+                <div
                   id="chat-composer"
-                  ref={textareaRef}
-                  name="chat-composer"
-                  rows={1}
-                  value={composer}
-                  onChange={(event) => setComposer(event.target.value)}
+                  ref={composerEditorRef}
+                  className="composer-editor"
+                  role="textbox"
+                  aria-multiline="true"
+                  contentEditable={!generating}
+                  suppressContentEditableWarning
+                  tabIndex={0}
+                  onInput={(event) => setComposer(normalizeComposerText(event.currentTarget.innerText))}
                   onKeyDown={(event) => {
-                    if (event.key === "Enter" && !event.shiftKey) {
-                      event.preventDefault();
-                      void sendMessage();
+                    if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+                    event.preventDefault();
+                    if (event.shiftKey) {
+                      setComposer(insertComposerText(event.currentTarget, "\n"));
+                      return;
                     }
+                    void sendMessage();
                   }}
-                  placeholder={t.messageModel(activeModel.name)}
+                  onPaste={(event) => {
+                    event.preventDefault();
+                    setComposer(insertComposerText(event.currentTarget, event.clipboardData.getData("text/plain")));
+                  }}
+                  data-placeholder={t.messageModel(activeModel.name)}
                   aria-label={t.messageAria}
-                  aria-autocomplete="none"
-                  autoComplete="off"
                   autoCapitalize="sentences"
                   autoCorrect="on"
                   inputMode="text"
                   enterKeyHint="send"
                   spellCheck
-                  data-form-type="other"
-                  data-1p-ignore="true"
-                  data-lpignore="true"
-                  data-bwignore="true"
-                  disabled={generating}
+                  aria-disabled={generating}
                 />
                 <div className="composer-bottom">
                   <div className="composer-tools">

@@ -412,8 +412,9 @@ input:focus-visible {
 .composer-wrap::before { position: absolute; z-index: -1; right: -80px; bottom: 0; left: -80px; height: 165px; background: linear-gradient(transparent, color-mix(in srgb, var(--canvas) 94%, transparent) 43%); content: ""; pointer-events: none; }
 .composer { border: 1px solid var(--line-strong); border-radius: 20px; background: color-mix(in srgb, var(--panel-raised) 96%, transparent); box-shadow: 0 12px 36px rgba(37, 53, 44, 0.09), 0 2px 7px rgba(37, 53, 44, 0.04); padding: 14px 14px 12px 17px; backdrop-filter: blur(20px); transition: border-color 170ms ease, box-shadow 170ms ease; }
 .composer:focus-within { border-color: rgba(67, 112, 91, 0.42); box-shadow: 0 15px 40px rgba(37, 53, 44, 0.11), 0 0 0 3px rgba(91, 141, 121, 0.06); }
-.composer textarea { display: block; width: 100%; min-height: 40px; max-height: 180px; resize: none; border: 0; outline: 0; background: transparent; padding: 4px 3px 10px; font-size: 15px; line-height: 1.55; }
-.composer textarea::placeholder { color: color-mix(in srgb, var(--muted) 82%, transparent); }
+.composer-editor { display: block; width: 100%; min-height: 40px; max-height: 180px; border: 0; outline: 0; background: transparent; padding: 4px 3px 10px; font-size: 15px; line-height: 1.55; overflow-y: auto; overflow-wrap: anywhere; white-space: pre-wrap; }
+.composer-editor:empty::before { color: color-mix(in srgb, var(--muted) 82%, transparent); content: attr(data-placeholder); pointer-events: none; }
+.composer-editor[contenteditable="false"] { cursor: default; }
 .composer-bottom { display: flex; align-items: center; }
 .composer-tools { display: flex; min-width: 0; align-items: center; gap: 8px; }
 .attach-button { display: grid; width: 32px; height: 32px; flex: 0 0 32px; place-items: center; border: 1px solid var(--line); border-radius: 11px; background: var(--accent-pale); color: var(--accent-bright); }
@@ -626,7 +627,7 @@ input:focus-visible {
   .image-model-copy i { font-size: 9px; }
   .inspector-capabilities span { font-size: 10px; }
   .change-model { font-size: 12px; }
-  .composer textarea,
+  .composer-editor,
   .model-search input,
   .inspector-section textarea,
   .number-input { font-size: 16px; }
@@ -668,7 +669,7 @@ input:focus-visible {
   .welcome-state > p { font-size: 14px; line-height: 1.7; }
   .starter-grid button:nth-child(n + 3) { display: none; }
   .composer { border-radius: 20px; padding: 12px 12px 10px 14px; }
-  .composer textarea { min-height: 64px; font-size: 16px; }
+  .composer-editor { min-height: 64px; font-size: 16px; }
   .composer-badges > span { display: none; }
   .composer-badges button { max-width: 140px; }
   .attachment-card.file { width: 100%; }
