@@ -668,7 +668,7 @@ input:focus-visible {
   .welcome-state > p { font-size: 14px; line-height: 1.7; }
   .starter-grid button:nth-child(n + 3) { display: none; }
   .composer { border-radius: 20px; padding: 12px 12px 10px 14px; }
-  .composer textarea { font-size: 16px; }
+  .composer textarea { min-height: 64px; font-size: 16px; }
   .composer-badges > span { display: none; }
   .composer-badges button { max-width: 140px; }
   .attachment-card.file { width: 100%; }

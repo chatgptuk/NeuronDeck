@@ -24,7 +24,7 @@ import {
   WandSparkles,
   X,
 } from "lucide-react";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   getCapabilityLabel,
   getLocalizedError,
@@ -198,6 +198,19 @@ function App() {
     const timeout = window.setTimeout(() => setRevealedTimeMessageId(null), 3_200);
     return () => window.clearTimeout(timeout);
   }, [revealedTimeMessageId]);
+
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    textarea.style.height = "auto";
+    const maxHeight = Number.parseFloat(window.getComputedStyle(textarea).maxHeight);
+    const nextHeight = Number.isFinite(maxHeight)
+      ? Math.min(textarea.scrollHeight, maxHeight)
+      : textarea.scrollHeight;
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > nextHeight ? "auto" : "hidden";
+  }, [composer]);
 
   useEffect(() => {
     let active = true;
