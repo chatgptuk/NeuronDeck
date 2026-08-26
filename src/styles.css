@@ -314,7 +314,11 @@ input:focus-visible {
 .code-copy { position: absolute; z-index: 1; top: 9px; right: 9px; display: flex; align-items: center; gap: 5px; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; background: rgba(255, 255, 255, 0.055); padding: 5px 8px; color: #c4d1ca; font-size: 9px; }
 .reasoning-block { margin-bottom: 15px; border: 1px solid var(--line); border-radius: 14px; background: var(--accent-pale); padding: 10px 13px; color: var(--muted-strong); font-size: 11px; }
 .reasoning-block summary { color: var(--amber); cursor: pointer; font-size: 9px; font-weight: 650; }
-.reasoning-block p { margin: 9px 0 0; white-space: pre-wrap; }
+.reasoning-markdown { margin-top: 10px; }
+.reasoning-markdown > :first-child { margin-top: 0; }
+.reasoning-markdown > :last-child { margin-bottom: 0; }
+.reasoning-markdown p { margin: 0.65em 0; white-space: normal; }
+.reasoning-markdown .code-block { border-radius: 12px; box-shadow: none; }
 .message-actions { display: flex; gap: 4px; margin: 11px 0 0 37px; }
 .message.user .message-actions { justify-content: flex-end; margin-right: 2px; }
 .message-actions button { display: flex; align-items: center; gap: 5px; border: 0; border-radius: 9px; background: transparent; padding: 6px 8px; color: var(--muted); font-size: 9px; }

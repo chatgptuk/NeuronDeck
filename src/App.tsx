@@ -37,6 +37,7 @@ import {
   formatContextWindow,
   formatPrice,
   getModel,
+  supportsMultimodalAttachments,
 } from "./lib/models";
 import {
   ATTACHMENT_ACCEPT,
@@ -158,9 +159,10 @@ function App() {
     workspace.conversations.find((conversation) => conversation.id === workspace.activeConversationId) ??
     workspace.conversations[0];
   const activeModel = getModel(models, activeConversation.modelId);
-  const activeModelSupportsVision = activeModel.capabilities.includes("vision");
-  const hasIncompatibleImages =
-    !activeModelSupportsVision && pendingAttachments.some((attachment) => attachment.kind === "image");
+  const activeModelSupportsAttachments = supportsMultimodalAttachments(activeModel);
+  const attachmentTarget = `${activeConversation.id}:${activeModel.id}`;
+  const attachmentTargetRef = useRef(attachmentTarget);
+  attachmentTargetRef.current = attachmentTarget;
 
   useEffect(() => {
     let active = true;
@@ -369,8 +371,9 @@ function App() {
   );
 
   const sendMessage = useCallback(async () => {
-    const prompt = composer.trim() || (pendingAttachments.length ? t.attachmentDefaultPrompt : "");
-    if (!prompt || generating || attachmentBusy || hasIncompatibleImages) return;
+    const attachments = activeModelSupportsAttachments ? pendingAttachments : [];
+    const prompt = composer.trim() || (attachments.length ? t.attachmentDefaultPrompt : "");
+    if (!prompt || generating || attachmentBusy) return;
 
     const timestamp = now();
     const userMessage: ChatMessage = {
@@ -379,7 +382,7 @@ function App() {
       content: prompt,
       createdAt: timestamp,
       status: "complete",
-      ...(pendingAttachments.length ? { attachments: pendingAttachments } : {}),
+      ...(attachments.length ? { attachments } : {}),
     };
     const assistantMessage: ChatMessage = {
       id: id(),
@@ -404,11 +407,11 @@ function App() {
     await generateResponse(snapshot, contextMessages, assistantMessage.id);
   }, [
     activeConversation,
+    activeModelSupportsAttachments,
     attachmentBusy,
     composer,
     generateResponse,
     generating,
-    hasIncompatibleImages,
     pendingAttachments,
     t.attachmentDefaultPrompt,
     updateConversation,
@@ -445,7 +448,7 @@ function App() {
     const message = activeConversation.messages[index];
     if (!message || message.role !== "user") return;
     setComposer(message.content);
-    setPendingAttachments(message.attachments ?? []);
+    setPendingAttachments(activeModelSupportsAttachments ? (message.attachments ?? []) : []);
     setAttachmentError(null);
     updateConversation(activeConversation.id, (conversation) => ({
       ...conversation,
@@ -462,7 +465,8 @@ function App() {
   };
 
   const handleFileSelection = async (files: FileList | null) => {
-    if (!files?.length || attachmentBusy || generating) return;
+    if (!activeModelSupportsAttachments || !files?.length || attachmentBusy || generating) return;
+    const targetAtStart = attachmentTargetRef.current;
     setAttachmentBusy(true);
     setAttachmentError(null);
 
@@ -481,10 +485,6 @@ function App() {
           continue;
         }
         if (classification === "image") {
-          if (!activeModelSupportsVision) {
-            setAttachmentError(t.imageNeedsVision);
-            continue;
-          }
           if (imageCount >= imageLimit) {
             setAttachmentError(t.tooManyImages);
             continue;
@@ -549,11 +549,13 @@ function App() {
         });
       }
 
-      if (prepared.length) {
+      if (prepared.length && attachmentTargetRef.current === targetAtStart) {
         setPendingAttachments((current) => [...current, ...prepared].slice(0, MAX_ATTACHMENTS_PER_MESSAGE));
       }
     } catch (error) {
-      setAttachmentError(error instanceof Error ? error.message : t.attachmentReadFailed);
+      if (attachmentTargetRef.current === targetAtStart) {
+        setAttachmentError(error instanceof Error ? error.message : t.attachmentReadFailed);
+      }
     } finally {
       setAttachmentBusy(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -627,12 +629,11 @@ function App() {
   const selectModel = (modelId: string) => {
     updateConversation(activeConversation.id, (conversation) => ({ ...conversation, modelId, updatedAt: now() }));
     const selectedModel = getModel(models, modelId);
-    setAttachmentError(
-      pendingAttachments.some((attachment) => attachment.kind === "image") &&
-        !selectedModel.capabilities.includes("vision")
-        ? t.imageNeedsVision
-        : null,
-    );
+    if (!supportsMultimodalAttachments(selectedModel)) {
+      setPendingAttachments([]);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+    setAttachmentError(null);
     setModelPickerOpen(false);
   };
 
@@ -802,7 +803,11 @@ function App() {
                         {message.reasoning && (
                           <details className="reasoning-block">
                             <summary>{t.reasoningTrace}</summary>
-                            <p>{message.reasoning}</p>
+                            <div className="reasoning-markdown">
+                              <Suspense fallback={<p>{message.reasoning}</p>}>
+                                <MarkdownMessage content={message.reasoning} language={language} />
+                              </Suspense>
+                            </div>
                           </details>
                         )}
                         {message.content ? (
@@ -833,21 +838,25 @@ function App() {
 
             <div className="composer-wrap">
               <div className="composer">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept={ATTACHMENT_ACCEPT}
-                  multiple
-                  hidden
-                  onChange={(event) => void handleFileSelection(event.target.files)}
-                />
-                {pendingAttachments.length ? (
-                  <AttachmentStrip
-                    attachments={pendingAttachments}
-                    language={language}
-                    onRemove={removePendingAttachment}
-                    pending
-                  />
+                {activeModelSupportsAttachments ? (
+                  <>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept={ATTACHMENT_ACCEPT}
+                      multiple
+                      hidden
+                      onChange={(event) => void handleFileSelection(event.target.files)}
+                    />
+                    {pendingAttachments.length ? (
+                      <AttachmentStrip
+                        attachments={pendingAttachments}
+                        language={language}
+                        onRemove={removePendingAttachment}
+                        pending
+                      />
+                    ) : null}
+                  </>
                 ) : null}
                 <textarea
                   ref={textareaRef}
@@ -866,16 +875,18 @@ function App() {
                 />
                 <div className="composer-bottom">
                   <div className="composer-tools">
-                    <button
-                      className="attach-button"
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={generating || attachmentBusy || pendingAttachments.length >= MAX_ATTACHMENTS_PER_MESSAGE}
-                      type="button"
-                      aria-label={t.attachFiles}
-                      title={t.attachFiles}
-                    >
-                      {attachmentBusy ? <LoaderCircle className="spinning" size={17} /> : <Paperclip size={17} />}
-                    </button>
+                    {activeModelSupportsAttachments ? (
+                      <button
+                        className="attach-button"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={generating || attachmentBusy || pendingAttachments.length >= MAX_ATTACHMENTS_PER_MESSAGE}
+                        type="button"
+                        aria-label={t.attachFiles}
+                        title={t.attachFiles}
+                      >
+                        {attachmentBusy ? <LoaderCircle className="spinning" size={17} /> : <Paperclip size={17} />}
+                      </button>
+                    ) : null}
                     <div className="composer-badges">
                       <button onClick={() => setModelPickerOpen(true)} type="button"><span className="model-dot" />{activeModel.name}</button>
                       <span>{formatContextWindow(activeModel.contextWindow, language)}</span>
@@ -888,7 +899,7 @@ function App() {
                       className="send-button"
                       onClick={() => void sendMessage()}
                       disabled={
-                        (!composer.trim() && !pendingAttachments.length) || attachmentBusy || hasIncompatibleImages
+                        (!composer.trim() && !(activeModelSupportsAttachments && pendingAttachments.length)) || attachmentBusy
                       }
                       type="button"
                       aria-label={t.sendMessage}
@@ -897,9 +908,7 @@ function App() {
                 </div>
               </div>
               {attachmentBusy ? <p className="attachment-status">{t.processingAttachment}</p> : null}
-              {attachmentError || hasIncompatibleImages ? (
-                <p className="attachment-error" role="alert">{attachmentError || t.imageNeedsVision}</p>
-              ) : null}
+              {attachmentError ? <p className="attachment-error" role="alert">{attachmentError}</p> : null}
               <p className="composer-note">{t.modelCaution}</p>
             </div>
           </section>

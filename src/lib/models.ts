@@ -9,6 +9,9 @@ export const DEFAULT_MODEL_ID = "@cf/zai-org/glm-4.7-flash";
 export const getModel = (models: ModelInfo[], id: string): ModelInfo =>
   models.find((model) => model.id === id) ?? models[0] ?? FALLBACK_MODELS[0];
 
+export const supportsMultimodalAttachments = (model: ModelInfo): boolean =>
+  model.capabilities.includes("vision");
+
 export const formatContextWindow = (tokens: number, language: Language = "en"): string => {
   if (!tokens) return language === "zh" ? "上下文未知" : "Context n/a";
   let value: string;

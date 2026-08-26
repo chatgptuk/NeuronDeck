@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { FALLBACK_MODELS, formatContextWindow, searchModels } from "./models";
+import {
+  FALLBACK_MODELS,
+  formatContextWindow,
+  searchModels,
+  supportsMultimodalAttachments,
+} from "./models";
 
 describe("Cloudflare-hosted chat catalog", () => {
   it("contains the complete synced chat catalog without the safety classifier", () => {
@@ -14,6 +19,13 @@ describe("Cloudflare-hosted chat catalog", () => {
       "GPT-OSS 20B",
     ]);
     expect(searchModels(FALLBACK_MODELS, "", "vision").length).toBeGreaterThanOrEqual(5);
+  });
+
+  it("only enables attachments for multimodal models", () => {
+    const visionModel = FALLBACK_MODELS.find((model) => model.capabilities.includes("vision"));
+    const textModel = FALLBACK_MODELS.find((model) => !model.capabilities.includes("vision"));
+    expect(visionModel && supportsMultimodalAttachments(visionModel)).toBe(true);
+    expect(textModel && supportsMultimodalAttachments(textModel)).toBe(false);
   });
 
   it("formats large context windows clearly", () => {
