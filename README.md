@@ -1,89 +1,148 @@
-# NeuronDeck
+<p align="right">
+  <strong>简体中文</strong> · <a href="./README.en.md">English</a>
+</p>
 
-NeuronDeck is a local-first chat workspace for every current Cloudflare-hosted Text Generation model that supports conversation. It combines a searchable model catalog, streaming chat, per-conversation controls, Markdown rendering, local IndexedDB persistence, and a responsive interface in one Cloudflare Worker.
+<div align="center">
+  <img src="./public/favicon.svg" width="72" height="72" alt="NeuronDeck" />
+  <h1>NeuronDeck</h1>
+  <p>一个清新、专注、由 Cloudflare Workers AI 驱动的多模型聊天工作台。</p>
 
-Production: [ai.chatgpt.org.uk](https://ai.chatgpt.org.uk)
+  <p>
+    <a href="https://ai.chatgpt.org.uk">在线体验</a>
+    ·
+    <a href="https://github.com/chatgptuk/NeuronDeck/issues">反馈问题</a>
+  </p>
 
-## What is included
+  <a href="https://deploy.workers.cloudflare.com/?url=https://github.com/chatgptuk/NeuronDeck">
+    <img src="https://deploy.workers.cloudflare.com/button" alt="一键部署到 Cloudflare" />
+  </a>
+</div>
 
-- 28 Cloudflare-hosted chat models from the live Workers AI catalog
-- Search, capability filters, favorites, context sizes, and per-token pricing
-- Chinese and English interface with localized model descriptions and a one-click language switch
-- Light appearance by default, with a persistent optional dark theme
-- Streaming generation with stop, regenerate, copy, and edit-from-here actions
-- Image input for every catalog model marked as vision-capable, with previews in the composer and message history
-- Text, Markdown, code, PDF, Word, spreadsheet, HTML, XML, OpenDocument, and Numbers attachments; rich documents are converted through Workers AI before inference
-- Per-conversation system prompt, temperature, and maximum output tokens
-- Markdown, GitHub-flavored tables, syntax highlighting, and code copying
-- Browser-local conversation history stored in IndexedDB
-- Same-origin API enforcement, request validation, and a 10 requests/minute rate limit
-- One Worker deployment with Workers Static Assets and a Workers AI binding
+## 这是什么
 
-The Cloudflare Llama Guard safety classifier is intentionally excluded because it is a classifier rather than a chat model. Experimental and LoRA-capable chat models remain available and are labelled in the selector.
+NeuronDeck 把 Cloudflare 托管的对话模型、多模态输入、图片生成与真实流式输出整合在同一个 Worker 中。对话保存在浏览器本地；默认部署直接使用部署者账户中的 Workers AI 额度，也可以进一步配置 Cloudflare OAuth，让每位用户授权并使用自己的账户额度。
 
-## Requirements
+## 主要功能
+
+- 28 个 Cloudflare 托管的对话模型，支持搜索、能力筛选、收藏、上下文大小与价格排序
+- 中文与英文界面，默认浅色外观，并可持久化切换主题
+- 真正的 SSE 流式生成，支持停止、重新生成、复制与“从这里编辑”
+- 视觉模型支持图片输入；支持 PDF、Word、表格、HTML、XML、OpenDocument 与 Numbers 等附件
+- Markdown、GitHub 风格表格、代码高亮、代码复制与推理过程渲染
+- 通过 Function Calling 调用 FLUX.2 Klein 9B、FLUX.2 Dev、Lucid Origin 与 Phoenix 1.0 生图
+- 使用 Cloudflare Workflows 与 R2 承接耗时生图任务，切到后台或刷新后仍可恢复结果
+- 根据模型能力设置合理的最大输出 Token，并提供对话级系统提示词、温度与输出上限
+- IndexedDB 本地对话历史、移动端优化、消息时间与生成耗时
+- 可选 Cloudflare OAuth：用户可授权自己的账户并使用自己的 Workers AI 额度
+- 同源 API 校验、请求验证、加密 OAuth 会话与每分钟请求限制
+
+## 一键部署
+
+点击上方的 **Deploy to Cloudflare** 按钮，登录 Cloudflare 和 GitHub 后即可创建一份属于你的仓库与 Worker。Cloudflare 会读取根目录的 `wrangler.jsonc`，为新部署配置 Workers AI，并自动创建 KV 与 R2 资源；应用默认发布到部署者自己的 `workers.dev` 地址，不会绑定 `ai.chatgpt.org.uk`，也不会连接本项目的生产资源。
+
+一键部署后的默认模式会使用 **Worker 所属 Cloudflare 账户** 的 Workers AI 额度。Cloudflare OAuth 用户登录不会自动启用，因为每个部署都必须拥有自己的 OAuth 客户端、回调域名与会话密钥。
+
+Cloudflare 文档：[Deploy to Cloudflare 按钮](https://developers.cloudflare.com/workers/platform/deploy-buttons/) · [Wrangler 自动配置资源](https://developers.cloudflare.com/workers/wrangler/configuration/#automatic-provisioning)
+
+### 可选：启用 Cloudflare 账户登录
+
+1. 在 Cloudflare 创建 OAuth 应用，并将回调地址设为：
+
+   ```text
+   https://你的域名/api/auth/cloudflare/callback
+   ```
+
+2. 在自己的 Wrangler 配置中增加 `CLOUDFLARE_OAUTH_CLIENT_ID`：
+
+   ```jsonc
+   "vars": {
+     "CLOUDFLARE_OAUTH_CLIENT_ID": "你的 OAuth Client ID",
+     "CLOUDFLARE_OAUTH_SCOPES": "ai.read account-settings.read offline_access"
+   }
+   ```
+
+3. 生成一个 32 字节的会话密钥，并以 Worker Secret 保存：
+
+   ```bash
+   openssl rand -base64 32 | tr '+/' '-_' | tr -d '=' | wrangler secret put OAUTH_SESSION_SECRET
+   ```
+
+4. 重新部署。OAuth Token 会使用 AES-GCM 加密后存入 `AUTH_SESSIONS` KV，不会发送到浏览器。
+
+> `CLOUDFLARE_OAUTH_CLIENT_ID` 不是密码；`OAUTH_SESSION_SECRET` 必须只保存在 Cloudflare Secret 中，不能提交到 Git。
+
+## 本地开发
+
+### 环境要求
 
 - Node.js
 - npm
-- A system-global Wrangler installation
-- A Cloudflare account with Workers AI access
+- 系统全局安装的 Wrangler
+- 已启用 Workers AI 的 Cloudflare 账户
 
-This repository deliberately does not install Wrangler locally. All Cloudflare commands must resolve to the system-global binary, normally `/opt/homebrew/bin/wrangler` on macOS.
-
-## Install and validate
+本仓库不会安装项目级 Wrangler。所有 Cloudflare 命令都应解析到系统全局二进制文件；macOS 上通常为 `/opt/homebrew/bin/wrangler`。
 
 ```bash
 npm install
 npm run check
 ```
 
-For a production-like local run:
+启动包含 Worker API 的本地环境：
 
 ```bash
 npm run build
 wrangler dev --port 8787
 ```
 
-For Vite HMR, keep the Worker running on port 8787 and run `npm run dev` in a second terminal. Vite proxies `/api` requests to the Worker.
+如需 Vite HMR，请保持 Worker 运行在 `8787` 端口，再在第二个终端执行 `npm run dev`。Vite 会把 `/api` 请求代理到 Worker。
 
-## Refresh the model catalog
+## 手动部署
 
-The committed catalog is a deployment snapshot so the application never needs to expose a Cloudflare API token at runtime. Refresh it before a release with:
-
-```bash
-node scripts/sync-models.mjs
-```
-
-The sync script refuses to use a Wrangler binary inside `node_modules`, queries the live `Text Generation` catalog, removes safety classifiers, and preserves curated display names and descriptions where possible.
-
-## Deploy
-
-Verify the global Wrangler version and account, then build and deploy directly:
+`wrangler.jsonc` 是可移植的公开模板：它启用 `workers.dev`，并让 Wrangler 为当前账户自动配置资源。
 
 ```bash
 command -v wrangler
 wrangler --version
 npm view wrangler version
 wrangler whoami
-npm run build
+npm install
+npm run check
 wrangler deploy
 ```
 
-The Worker configuration binds the custom domain `ai.chatgpt.org.uk`, disables the `workers.dev` route, and sends only `/api/*` traffic through the Worker before static asset handling.
+如需自定义域名，请在自己的 Wrangler 配置中设置 `routes`，确认域名属于当前 Cloudflare 账户后再部署。仓库维护者使用独立的 `wrangler.production.jsonc` 发布演示站，避免公开模板误绑定生产域名或资源。
 
-## Architecture
+## 更新模型目录
+
+仓库中的模型目录是一份部署快照，因此运行时无需暴露 Cloudflare API Token。发布前可通过以下命令刷新：
+
+```bash
+node scripts/sync-models.mjs
+```
+
+同步脚本只允许调用系统全局 Wrangler，并会读取当前 Workers AI 文本生成目录、移除安全分类器，同时尽量保留人工整理的名称与中英文描述。
+
+## 架构
 
 ```text
-Browser
-├── React + Vite UI
-├── IndexedDB conversations
-└── /api/models + /api/chat + /api/attachments/convert
-          │
-          ▼
+浏览器
+├── React + Vite 界面
+├── IndexedDB 对话与设置
+└── /api/models · /api/chat · /api/images · /api/attachments
+                    │
+                    ▼
 Cloudflare Worker
-├── model allowlist + validation
-├── vision request adapters + document conversion
-├── Rate Limiting binding
-├── Workers AI binding
+├── 模型白名单、输入校验与真正的 SSE 转发
+├── Workers AI Binding / 用户授权后的 Workers AI REST API
+├── Function Calling 与图片生成 Workflow
+├── KV 加密 OAuth 会话 · R2 图片结果 · Rate Limiting
 └── Workers Static Assets
 ```
+
+## 说明
+
+Llama Guard 是安全分类器而不是对话模型，因此未列入聊天模型目录。实验模型与支持 LoRA 的对话模型会保留，并在选择器中标明能力。
+
+## 许可证
+
+当前仓库尚未附带开源许可证。公开可见不等同于授予复制、修改或分发许可；如需复用，请先联系仓库所有者。

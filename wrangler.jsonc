@@ -2,13 +2,7 @@
   "name": "neurondeck",
   "main": "./worker/index.ts",
   "compatibility_date": "2026-08-25",
-  "workers_dev": false,
-  "routes": [
-    {
-      "pattern": "ai.chatgpt.org.uk",
-      "custom_domain": true
-    }
-  ],
+  "workers_dev": true,
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
@@ -20,18 +14,15 @@
   },
   "kv_namespaces": [
     {
-      "binding": "AUTH_SESSIONS",
-      "id": "REDACTED_KV_NAMESPACE_ID"
+      "binding": "AUTH_SESSIONS"
     }
   ],
   "vars": {
-    "CLOUDFLARE_OAUTH_CLIENT_ID": "REDACTED_OAUTH_CLIENT_ID",
     "CLOUDFLARE_OAUTH_SCOPES": "ai.read account-settings.read offline_access"
   },
   "r2_buckets": [
     {
-      "binding": "IMAGE_RESULTS",
-      "bucket_name": "redacted-image-results"
+      "binding": "IMAGE_RESULTS"
     }
   ],
   "workflows": [
