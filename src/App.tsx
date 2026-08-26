@@ -210,7 +210,7 @@ function App() {
     document.documentElement.dataset.theme = theme;
     document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.setAttribute(
       "content",
-      theme === "dark" ? "#090c10" : "#f4f3ef",
+      theme === "dark" ? "#19221e" : "#edf1eb",
     );
     localStorage.setItem("neurondeck-theme-v2", theme);
   }, [theme]);

@@ -26,6 +26,19 @@ const capabilityIcon = {
   coding: Code2,
 };
 
+const providerLogos: Record<string, string> = {
+  DeepSeek: "/model-logos/deepseek.svg",
+  Google: "/model-logos/google.svg",
+  IBM: "/model-logos/ibm.svg",
+  Meta: "/model-logos/meta.svg",
+  "Mistral AI": "/model-logos/mistral.svg",
+  "Moonshot AI": "/model-logos/moonshot.svg",
+  NVIDIA: "/model-logos/nvidia.svg",
+  OpenAI: "/model-logos/openai.svg",
+  Qwen: "/model-logos/qwen.svg",
+  "Z.ai": "/model-logos/zai.svg",
+};
+
 interface ModelPickerProps {
   models: ModelInfo[];
   selectedId: string;
@@ -114,7 +127,13 @@ export function ModelPicker({
               onClick={() => onSelect(model.id)}
             >
               <div className="model-card-top">
-                <div className="provider-mark">{model.provider.slice(0, 1)}</div>
+                <div className="provider-mark" title={model.provider}>
+                  {providerLogos[model.provider] ? (
+                    <img alt="" aria-hidden="true" src={providerLogos[model.provider]} />
+                  ) : (
+                    <Sparkles aria-hidden="true" size={17} strokeWidth={1.6} />
+                  )}
+                </div>
                 <div className="model-card-title">
                   <h3>{model.name}</h3>
                   <span>{model.provider}</span>
