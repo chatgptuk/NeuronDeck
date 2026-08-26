@@ -105,7 +105,7 @@ function App() {
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [theme, setTheme] = useState<"dark" | "light">(
-    () => (localStorage.getItem("neurondeck-theme") as "dark" | "light" | null) ?? "light",
+    () => (localStorage.getItem("neurondeck-theme-v2") as "dark" | "light" | null) ?? "light",
   );
   const abortRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -166,7 +166,7 @@ function App() {
       "content",
       theme === "dark" ? "#090c10" : "#f4f3ef",
     );
-    localStorage.setItem("neurondeck-theme", theme);
+    localStorage.setItem("neurondeck-theme-v2", theme);
   }, [theme]);
 
   useEffect(() => {
