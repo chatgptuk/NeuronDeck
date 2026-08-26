@@ -1,7 +1,8 @@
-import { Download, Maximize2, Sparkles } from "lucide-react";
+import { Download, Maximize2 } from "lucide-react";
 import { translations, type Language } from "../i18n";
 import { formatElapsedDuration } from "../lib/time";
 import type { GeneratedImage, ImageGenerationState } from "../types";
+import { CreationGlyph } from "./ProductIcons";
 
 const extensionForDataUrl = (dataUrl: string): string => {
   if (dataUrl.startsWith("data:image/png")) return "png";
@@ -22,7 +23,7 @@ export function GeneratedImageGallery({ images = [], state, language }: Generate
     <>
       {state?.status === "generating" ? (
         <div className="image-generation-status" role="status">
-          <span className="image-generation-glow"><Sparkles size={18} /></span>
+          <span className="image-generation-glow"><CreationGlyph /></span>
           <span>
             <strong>{t.imageGenerating}</strong>
             <small>{t.imageGeneratingWith(state.modelName)}</small>
@@ -32,7 +33,7 @@ export function GeneratedImageGallery({ images = [], state, language }: Generate
       ) : null}
       {state?.status === "error" ? (
         <div className="image-generation-status error" role="status">
-          <span className="image-generation-glow"><Sparkles size={18} /></span>
+          <span className="image-generation-glow"><CreationGlyph /></span>
           <span><strong>{t.imageGenerationFailed}</strong><small>{state.message}</small></span>
         </div>
       ) : null}

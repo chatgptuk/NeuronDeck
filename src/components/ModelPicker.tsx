@@ -5,7 +5,6 @@ import {
   Coins,
   Eye,
   Search,
-  Sparkles,
   Star,
   Wrench,
   X,
@@ -14,6 +13,7 @@ import { useMemo, useState } from "react";
 import { getCapabilityLabel, getModelDescription, translations, type Language } from "../i18n";
 import { formatContextWindow, formatPrice, searchModels, sortModelsByPrice } from "../lib/models";
 import type { ModelInfo } from "../types";
+import { ContextGlyph, NeuronGlyph } from "./ProductIcons";
 
 type Filter = "all" | "reasoning" | "vision" | "tools" | "paid" | "lora";
 
@@ -136,7 +136,7 @@ export function ModelPicker({
                   {providerLogos[model.provider] ? (
                     <img alt="" aria-hidden="true" src={providerLogos[model.provider]} />
                   ) : (
-                    <Sparkles aria-hidden="true" size={17} strokeWidth={1.6} />
+                    <NeuronGlyph className="provider-fallback-glyph" />
                   )}
                 </div>
                 <div className="model-card-title">
@@ -157,7 +157,7 @@ export function ModelPicker({
               </div>
               <p>{getModelDescription(model, language)}</p>
               <div className="capability-row">
-                <span className="capability"><Sparkles size={13} />{formatContextWindow(model.contextWindow, language)}</span>
+                <span className="capability"><ContextGlyph />{formatContextWindow(model.contextWindow, language)}</span>
                 {model.capabilities.map((capability) => {
                   const Icon = capabilityIcon[capability];
                   return <span className="capability" key={capability}><Icon size={13} />{getCapabilityLabel(capability, language)}</span>;

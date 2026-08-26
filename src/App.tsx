@@ -17,11 +17,9 @@ import {
   RefreshCw,
   Send,
   Settings2,
-  Sparkles,
   Square,
   Sun,
   Trash2,
-  WandSparkles,
   X,
 } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -69,6 +67,13 @@ import {
 import type { Attachment, ChatMessage, Conversation, GeneratedImage, ModelInfo, WorkspaceState } from "./types";
 import { AttachmentStrip } from "./components/AttachmentStrip";
 import { GeneratedImageGallery } from "./components/GeneratedImageGallery";
+import {
+  CodeGlyph,
+  CreationGlyph,
+  IdeaGlyph,
+  NeuronGlyph,
+  PerspectiveGlyph,
+} from "./components/ProductIcons";
 
 const MarkdownMessage = lazy(() =>
   import("./components/MarkdownMessage").then((module) => ({ default: module.MarkdownMessage })),
@@ -81,6 +86,7 @@ const id = (): string => crypto.randomUUID();
 const now = (): string => new Date().toISOString();
 const LEGACY_VISION_MODEL_ID = "@cf/meta/llama-3.2-11b-vision-instruct";
 const MAX_CONTEXT_ATTACHMENTS = 8;
+const STARTER_ICONS = [IdeaGlyph, CodeGlyph, PerspectiveGlyph] as const;
 
 const pruneAttachmentsForRequest = (messages: ChatMessage[], modelId: string): ChatMessage[] => {
   let attachmentSlots = MAX_CONTEXT_ATTACHMENTS;
@@ -785,7 +791,7 @@ function App() {
       {sidebarOpen && <button className="mobile-scrim" aria-label={t.closeSidebar} onClick={() => setSidebarOpen(false)} />}
       <aside className={sidebarOpen ? "sidebar open" : "sidebar"}>
         <div className="brand-row">
-          <div className="brand-mark"><span /><span /><span /></div>
+          <div className="brand-mark"><NeuronGlyph /></div>
           <div className="brand-copy">
             <strong>NeuronDeck</strong>
             <span>{t.brandSubtitle}</span>
@@ -889,21 +895,24 @@ function App() {
             <div className="message-scroll">
               {activeConversation.messages.length === 0 ? (
                 <div className="welcome-state">
-                  <div className="welcome-orbit"><span /><span /><span /></div>
+                  <div className="welcome-orbit"><NeuronGlyph /></div>
                   <span className="eyebrow">{t.welcomeEyebrow}</span>
                   <h1>{t.welcomeTitle}</h1>
                   <p>{t.welcomeDescription}</p>
                   <div className="starter-grid">
-                    {t.starterPrompts.map((item) => (
-                      <button key={item.label} type="button" onClick={() => {
-                        setComposer(item.prompt);
-                        textareaRef.current?.focus();
-                      }}>
-                        <Sparkles size={16} />
-                        <strong>{item.label}</strong>
-                        <span>{item.prompt}</span>
-                      </button>
-                    ))}
+                    {t.starterPrompts.map((item, index) => {
+                      const StarterIcon = STARTER_ICONS[index % STARTER_ICONS.length];
+                      return (
+                        <button key={item.label} type="button" onClick={() => {
+                          setComposer(item.prompt);
+                          textareaRef.current?.focus();
+                        }}>
+                          <span className="starter-icon"><StarterIcon /></span>
+                          <strong>{item.label}</strong>
+                          <span>{item.prompt}</span>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               ) : (
@@ -914,7 +923,7 @@ function App() {
                         {message.role === "user" ? (
                           <div className="avatar user-avatar">Y</div>
                         ) : (
-                          <div className="avatar ai-avatar"><span /></div>
+                          <div className="avatar ai-avatar"><NeuronGlyph /></div>
                         )}
                         <div>
                           <strong>{message.role === "user" ? t.you : getModel(models, message.modelId ?? activeModel.id).name}</strong>
@@ -1047,7 +1056,7 @@ function App() {
                     <div className="composer-badges">
                       <button onClick={() => setModelPickerOpen(true)} type="button"><span className="model-dot" />{activeModel.name}</button>
                       {activeModelSupportsTools ? (
-                        <span className="image-tool-badge"><WandSparkles size={12} />{t.imageToolBadge(activeImageModel.name)}</span>
+                        <span className="image-tool-badge"><CreationGlyph />{t.imageToolBadge(activeImageModel.name)}</span>
                       ) : null}
                       <span>{formatContextWindow(activeModel.contextWindow, language)}</span>
                     </div>
@@ -1148,7 +1157,7 @@ function App() {
             </div>
             {activeModelSupportsTools ? (
               <div className="inspector-section image-model-section">
-                <span className="section-title"><WandSparkles size={14} />{t.imageModel}</span>
+                <span className="section-title"><CreationGlyph />{t.imageModel}</span>
                 <p>{t.imageModelDescription}</p>
                 <div className="image-model-options" role="radiogroup" aria-label={t.imageModel}>
                   {IMAGE_MODELS.map((imageModel) => {
