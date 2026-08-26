@@ -440,6 +440,16 @@ const extractCompletion = (result: unknown): { content: string; reasoning: strin
   };
 };
 
+const completionClaimsImageCreated = (content: string): boolean => {
+  const compact = content.replace(/\s+/g, " ").trim();
+  if (!compact) return false;
+  return (
+    /(?:已|已经).{0,16}(?:生成|创作|制作|绘制|完成).{0,100}(?:图|图片|图像|海报|插画|照片|头像|图标)/u.test(compact) ||
+    /\b(?:(?:i|we)(?:'ve| have)|successfully|now)\s+(?:generated|created|made|rendered|designed)\b/i.test(compact) ||
+    /\b(?:image|picture|poster|illustration|photo|portrait|icon)\s+(?:has been|is now)\s+(?:generated|created|rendered|ready)\b/i.test(compact)
+  );
+};
+
 const handleToolChat = (
   request: Request,
   env: Env,
@@ -454,6 +464,8 @@ const handleToolChat = (
   const prefersChinese = request.headers.get("accept-language")?.toLowerCase().startsWith("zh") ?? false;
   let cancelled = false;
   let imageInvocationStarted = false;
+  let imageInvocationSucceeded = false;
+  let imageInvocationFailed = false;
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -467,7 +479,9 @@ const handleToolChat = (
           content:
             "You have a working generate_image tool connected to a real image model. " +
             "Use it whenever the user's semantic intent is to create a new visual, even when they do not say the exact words 'generate an image'. " +
-            "Never claim you cannot generate images when that intent is present. Do not call it for ordinary questions or image analysis.",
+            "A referential follow-up asking for another result, a variation, a remake, or a changed version of a previously generated visual is also creation intent; infer a self-contained prompt from the conversation and retained image-tool context. " +
+            "Never state or imply that an image was created unless generate_image was called successfully in the current turn. " +
+            "Never claim you cannot generate images when creation intent is present. Do not call the tool for ordinary questions or image analysis.",
         },
         ...messages,
       ];
@@ -481,6 +495,7 @@ const handleToolChat = (
         const aspectRatio: ImageAspectRatio =
           args.aspect_ratio === "landscape" || args.aspect_ratio === "portrait" ? args.aspect_ratio : "square";
         if (!prompt) {
+          imageInvocationFailed = true;
           const message = prefersChinese ? "聊天模型没有提供有效的绘图描述。" : "The chat model did not provide a valid image prompt.";
           sendImageState({ status: "error", modelId: imageModel.id, modelName: imageModel.name, message });
           return `Image generation failed: ${message}`;
@@ -488,6 +503,7 @@ const handleToolChat = (
 
         const imageRateLimit = await env.CHAT_RATE_LIMITER.limit({ key: getRateKey(request, "image") });
         if (!imageRateLimit.success) {
+          imageInvocationFailed = true;
           const message = prefersChinese ? "生图请求过于频繁，请稍后再试。" : "Too many image requests. Please try again shortly.";
           sendImageState({ status: "error", modelId: imageModel.id, modelName: imageModel.name, prompt, message });
           return `Image generation failed: ${message}`;
@@ -496,10 +512,12 @@ const handleToolChat = (
         sendImageState({ status: "generating", modelId: imageModel.id, modelName: imageModel.name, prompt });
         try {
           const image = await generateImage(ai, imageModel.id, prompt, aspectRatio);
+          imageInvocationSucceeded = true;
           send({ generated_image: image });
           return `Image generated successfully with ${image.modelName} at ${image.width}x${image.height} (seed ${image.seed}). ` +
             "The image is already visible to the user. Briefly confirm completion without embedding image data.";
         } catch (error) {
+          imageInvocationFailed = true;
           console.error("Workers AI image generation failed", {
             model: imageModel.id,
             message: error instanceof Error ? error.message : "Unknown image generation error",
@@ -522,16 +540,48 @@ const handleToolChat = (
           max_tokens: maxTokens,
           stream: false,
         });
-        const toolCalls = extractToolCalls(decision);
+        let toolCalls = extractToolCalls(decision);
 
         if (!toolCalls.length) {
           const completion = extractCompletion(decision);
-          if (completion.reasoning) send({ reasoning: completion.reasoning });
-          send({ response: completion.content || (prefersChinese ? "模型没有返回内容。" : "The model returned no content.") });
-          if (completion.usage) send({ usage: completion.usage });
-          send({ done: true });
-          if (!cancelled) controller.close();
-          return;
+          if (completionClaimsImageCreated(completion.content)) {
+            const correctiveDecision = await ai.run(modelId, {
+              messages: [
+                toolMessages[0],
+                {
+                  role: "system",
+                  content:
+                    "Your previous draft claimed an image was created, but no tool was called. " +
+                    "You must now call generate_image exactly once. Infer a complete prompt from the conversation, including referenced prior image context and requested changes.",
+                },
+                ...toolMessages.slice(1),
+              ],
+              tools: [imageToolDefinition],
+              tool_choice: "required",
+              parallel_tool_calls: false,
+              temperature,
+              max_tokens: maxTokens,
+              stream: false,
+            });
+            toolCalls = extractToolCalls(correctiveDecision);
+            if (!toolCalls.length) {
+              const message = prefersChinese
+                ? "聊天模型没有成功启动生图工具，请重试或补充画面要求。"
+                : "The chat model did not start the image tool. Try again or add more visual detail.";
+              sendImageState({ status: "error", modelId: imageModel.id, modelName: imageModel.name, message });
+              send({ response: message });
+              send({ done: true });
+              if (!cancelled) controller.close();
+              return;
+            }
+          } else {
+            if (completion.reasoning) send({ reasoning: completion.reasoning });
+            send({ response: completion.content || (prefersChinese ? "模型没有返回内容。" : "The model returned no content.") });
+            if (completion.usage) send({ usage: completion.usage });
+            send({ done: true });
+            if (!cancelled) controller.close();
+            return;
+          }
         }
 
         const nextMessages: Array<Record<string, unknown>> = [...toolMessages];
@@ -559,6 +609,16 @@ const handleToolChat = (
               : `Unknown tool: ${call.name}`;
             nextMessages.push({ role: "tool", tool_call_id: call.id, content: toolResult });
           }
+        }
+
+        if (imageInvocationFailed && !imageInvocationSucceeded) {
+          const message = prefersChinese
+            ? "图片没有生成成功，请稍后重试或更换生图模型。"
+            : "The image was not generated. Try again or choose a different image model.";
+          send({ response: message });
+          send({ done: true });
+          if (!cancelled) controller.close();
+          return;
         }
 
         const finalResult = await ai.run(modelId, {

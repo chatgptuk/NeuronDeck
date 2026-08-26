@@ -198,4 +198,77 @@ describe("image generation function calling", () => {
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({ error: { code: "invalid_image_model" } });
   });
+
+  it("forces a corrective tool call when the model falsely claims an image was generated", async () => {
+    const calls: Array<{ model: string; input: Record<string, unknown> }> = [];
+    const ai = {
+      run: vi.fn(async (model: string, input: Record<string, unknown>) => {
+        calls.push({ model, input });
+        if (model === imageModel) return { image: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB" };
+        if (input.tool_choice === "auto") {
+          return { choices: [{ message: { role: "assistant", content: "已为您生成了一张新的街拍照片。" } }] };
+        }
+        if (input.tool_choice === "required") {
+          return {
+            choices: [{
+              message: {
+                role: "assistant",
+                content: null,
+                tool_calls: [{
+                  id: "corrective-image-call",
+                  type: "function",
+                  function: {
+                    name: "generate_image",
+                    arguments: JSON.stringify({
+                      prompt: "A new candid street portrait in warm autumn light",
+                      aspect_ratio: "portrait",
+                    }),
+                  },
+                }],
+              },
+            }],
+          };
+        }
+        return new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('data: {"response":"这次已真正生成。"}\n\ndata: [DONE]\n\n'));
+            controller.close();
+          },
+        });
+      }),
+      toMarkdown: vi.fn(),
+    };
+    const env = {
+      AI: ai,
+      ASSETS: { fetch: vi.fn() },
+      CHAT_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+    };
+    const request = new Request("https://ai.chatgpt.org.uk/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "accept-language": "zh-CN",
+        "x-neurondeck-client": "test-client-1234",
+      },
+      body: JSON.stringify({
+        model: chatModel,
+        imageModel,
+        messages: [
+          { role: "user", content: "画一张秋日街拍" },
+          { role: "assistant", content: "上一张已经完成。" },
+          { role: "user", content: "再来一张" },
+        ],
+      }),
+    });
+
+    const response = await worker.fetch(request, env as never);
+    const body = await response.text();
+
+    expect(calls.map((call) => call.model)).toEqual([chatModel, chatModel, imageModel, chatModel]);
+    expect(calls[1].input.tool_choice).toBe("required");
+    expect(JSON.stringify(calls[1].input.messages)).toContain("referenced prior image context");
+    expect(body).toContain('"status":"generating"');
+    expect(body).toContain('"generated_image"');
+    expect(body).not.toContain("已为您生成了一张新的街拍照片");
+  });
 });

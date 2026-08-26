@@ -56,6 +56,7 @@ import {
 import { consumeChatStream } from "./lib/stream";
 import { loadWorkspace, saveWorkspace } from "./lib/storage";
 import { hasRenderableMessageOutput } from "./lib/message-output";
+import { getMessageContentForRequest } from "./lib/chat-context";
 import {
   DEFAULT_IMAGE_MODEL_ID,
   getImageModel,
@@ -333,7 +334,7 @@ function App() {
           : []),
         ...requestMessages.map((message) => ({
           role: message.role,
-          content: message.content,
+          content: getMessageContentForRequest(message),
           ...(message.attachments?.length ? { attachments: message.attachments } : {}),
         })),
       ];
