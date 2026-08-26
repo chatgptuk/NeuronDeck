@@ -18,6 +18,19 @@
   "ai": {
     "binding": "AI"
   },
+  "r2_buckets": [
+    {
+      "binding": "IMAGE_RESULTS",
+      "bucket_name": "redacted-image-results"
+    }
+  ],
+  "workflows": [
+    {
+      "binding": "IMAGE_WORKFLOW",
+      "name": "neurondeck-image-generation",
+      "class_name": "ImageGenerationWorkflow"
+    }
+  ],
   "ratelimits": [
     {
       "name": "CHAT_RATE_LIMITER",

@@ -179,6 +179,83 @@ describe("image generation function calling", () => {
     expect(body).toContain("已经为你生成。");
   });
 
+  it("runs FLUX.2 Dev as a durable workflow and returns the stored result URL", async () => {
+    const devModel = "@cf/black-forest-labs/flux-2-dev";
+    const ai = {
+      run: vi.fn(async (_model: string, input: Record<string, unknown>) => {
+        if (input.tools) {
+          return {
+            choices: [{
+              message: {
+                tool_calls: [{
+                  id: "dev-image-call",
+                  type: "function",
+                  function: {
+                    name: "generate_image",
+                    arguments: JSON.stringify({ prompt: "A silver lake at dawn", aspect_ratio: "landscape" }),
+                  },
+                }],
+              },
+            }],
+          };
+        }
+        return new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('data: {"response":"图片完成。"}\n\ndata: [DONE]\n\n'));
+            controller.close();
+          },
+        });
+      }),
+      toMarkdown: vi.fn(),
+    };
+    const create = vi.fn(async (options: { id: string; params: Record<string, string> }) => ({
+      id: options.id,
+      status: vi.fn(async () => ({
+        status: "complete",
+        output: {
+          ...options.params,
+          elapsedMs: 95_000,
+          height: 768,
+          mimeType: "image/png",
+          modelName: "FLUX.2 Dev",
+          objectKey: `image-jobs/${options.id}`,
+          seed: 42,
+          width: 1344,
+        },
+      })),
+    }));
+    const env = {
+      AI: ai,
+      ASSETS: { fetch: vi.fn() },
+      CHAT_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+      IMAGE_WORKFLOW: { create, get: vi.fn() },
+      IMAGE_RESULTS: { get: vi.fn(), put: vi.fn() },
+    };
+    const request = new Request("https://ai.chatgpt.org.uk/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "accept-language": "zh-CN",
+        "x-neurondeck-client": "test-client-1234",
+      },
+      body: JSON.stringify({
+        model: chatModel,
+        imageModel: devModel,
+        messages: [{ role: "user", content: "生成一张黎明湖面的图片" }],
+      }),
+    });
+
+    const response = await worker.fetch(request, env as never);
+    const body = await response.text();
+
+    expect(create).toHaveBeenCalledOnce();
+    expect(ai.run.mock.calls.map((call) => call[0])).toEqual([chatModel, chatModel]);
+    expect(body).toContain('"jobId"');
+    expect(body).toContain('"modelId":"@cf/black-forest-labs/flux-2-dev"');
+    expect(body).toMatch(/"dataUrl":"\/api\/image-jobs\/[0-9a-f-]+\/image\.png\?token=[a-f0-9]+"/);
+    expect(body).toContain('"elapsedMs":95000');
+  });
+
   it("rejects image model ids outside the curated Cloudflare-hosted list", async () => {
     const env = {
       AI: { run: vi.fn(), toMarkdown: vi.fn() },
@@ -272,5 +349,48 @@ describe("image generation function calling", () => {
     expect(body).toContain('"generated_image"');
     expect(body).toMatch(/"elapsedMs":\d+/);
     expect(body).not.toContain("已为您生成了一张新的街拍照片");
+  });
+});
+
+describe("durable image job API", () => {
+  it("returns a completed workflow image only to its originating client", async () => {
+    const jobId = "11111111-2222-4333-8444-555555555555";
+    const output = {
+      accessToken: "0123456789abcdef0123456789abcdef",
+      clientId: "integration-test-client",
+      elapsedMs: 120_000,
+      height: 1024,
+      jobId,
+      mimeType: "image/webp",
+      modelId: "@cf/black-forest-labs/flux-2-dev",
+      modelName: "FLUX.2 Dev",
+      objectKey: `image-jobs/${jobId}`,
+      prompt: "A patient cloud",
+      seed: 7,
+      width: 1024,
+    };
+    const env = {
+      AI: { run: vi.fn(), toMarkdown: vi.fn() },
+      ASSETS: { fetch: vi.fn() },
+      CHAT_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+      IMAGE_WORKFLOW: {
+        create: vi.fn(),
+        get: vi.fn(async () => ({ status: vi.fn(async () => ({ status: "complete", output })) })),
+      },
+      IMAGE_RESULTS: { get: vi.fn(), put: vi.fn() },
+    };
+    const request = new Request(`https://ai.chatgpt.org.uk/api/image-jobs/${jobId}`, {
+      headers: { "x-neurondeck-client": "integration-test-client" },
+    });
+
+    const response = await worker.fetch(request, env as never);
+    await expect(response.json()).resolves.toMatchObject({
+      status: "complete",
+      image: {
+        id: jobId,
+        dataUrl: `/api/image-jobs/${jobId}/image.webp?token=${output.accessToken}`,
+        elapsedMs: 120_000,
+      },
+    });
   });
 });

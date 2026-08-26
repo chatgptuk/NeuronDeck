@@ -54,8 +54,10 @@ describe("Cloudflare-hosted chat catalog", () => {
     ]);
   });
 
-  it("keeps R1 Distill behind the two current DeepSeek models", () => {
-    expect(sortModelsByPrice(FALLBACK_MODELS).slice(0, 3).map((model) => model.id)).toEqual([
+  it("puts the two Kimi models first and keeps R1 Distill behind current DeepSeek models", () => {
+    expect(sortModelsByPrice(FALLBACK_MODELS).slice(0, 5).map((model) => model.id)).toEqual([
+      "@cf/moonshotai/kimi-k2.7-code",
+      "@cf/moonshotai/kimi-k2.6",
       "@cf/deepseek-ai/deepseek-v4-pro-0813",
       "@cf/deepseek-ai/deepseek-v4-flash-0731",
       "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",

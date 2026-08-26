@@ -6,7 +6,9 @@ export const FALLBACK_MODELS = catalog.models as ModelInfo[];
 export const CATALOG_SYNCED_AT = catalog.syncedAt;
 export const DEFAULT_MODEL_ID = "@cf/moonshotai/kimi-k2.7-code";
 
-const DEEPSEEK_DISPLAY_ORDER = [
+const MODEL_DISPLAY_PRIORITY = [
+  "@cf/moonshotai/kimi-k2.7-code",
+  "@cf/moonshotai/kimi-k2.6",
   "@cf/deepseek-ai/deepseek-v4-pro-0813",
   "@cf/deepseek-ai/deepseek-v4-flash-0731",
   "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
@@ -37,13 +39,13 @@ export const sortModelsByPrice = (
   models: ModelInfo[],
   favoriteIds: string[] = [],
 ): ModelInfo[] => [...models].sort((a, b) => {
-  const aDeepSeekIndex = DEEPSEEK_DISPLAY_ORDER.indexOf(a.id as (typeof DEEPSEEK_DISPLAY_ORDER)[number]);
-  const bDeepSeekIndex = DEEPSEEK_DISPLAY_ORDER.indexOf(b.id as (typeof DEEPSEEK_DISPLAY_ORDER)[number]);
-  const aIsPrioritizedDeepSeek = aDeepSeekIndex >= 0;
-  const bIsPrioritizedDeepSeek = bDeepSeekIndex >= 0;
-  if (aIsPrioritizedDeepSeek || bIsPrioritizedDeepSeek) {
-    if (aIsPrioritizedDeepSeek && bIsPrioritizedDeepSeek) return aDeepSeekIndex - bDeepSeekIndex;
-    return aIsPrioritizedDeepSeek ? -1 : 1;
+  const aPriorityIndex = MODEL_DISPLAY_PRIORITY.indexOf(a.id as (typeof MODEL_DISPLAY_PRIORITY)[number]);
+  const bPriorityIndex = MODEL_DISPLAY_PRIORITY.indexOf(b.id as (typeof MODEL_DISPLAY_PRIORITY)[number]);
+  const aIsPrioritized = aPriorityIndex >= 0;
+  const bIsPrioritized = bPriorityIndex >= 0;
+  if (aIsPrioritized || bIsPrioritized) {
+    if (aIsPrioritized && bIsPrioritized) return aPriorityIndex - bPriorityIndex;
+    return aIsPrioritized ? -1 : 1;
   }
 
   const aHasPrice = a.prices.output != null || a.prices.input != null;

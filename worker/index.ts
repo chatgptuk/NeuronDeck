@@ -1,3 +1,4 @@
+import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import catalog from "../src/data/models.generated.json";
 import { buildAiMessages, parseApiMessages } from "../src/lib/chat-input";
 import {
@@ -17,6 +18,8 @@ interface Env {
   AI: unknown;
   ASSETS: Fetcher;
   CHAT_RATE_LIMITER: RateLimiter;
+  IMAGE_RESULTS: R2Bucket;
+  IMAGE_WORKFLOW: Workflow<ImageWorkflowParams>;
 }
 
 interface ChatBody {
@@ -98,6 +101,30 @@ interface GenerateImageArguments {
   aspect_ratio?: unknown;
 }
 
+interface ImageWorkflowParams {
+  accessToken: string;
+  aspectRatio: ImageAspectRatio;
+  clientId: string;
+  jobId: string;
+  modelId: string;
+  prompt: string;
+}
+
+interface ImageWorkflowOutput {
+  accessToken: string;
+  clientId: string;
+  elapsedMs: number;
+  height: number;
+  jobId: string;
+  mimeType: string;
+  modelId: string;
+  modelName: string;
+  objectKey: string;
+  prompt: string;
+  seed: number;
+  width: number;
+}
+
 const imageDimensions: Record<ImageAspectRatio, { width: number; height: number }> = {
   square: { width: 1024, height: 1024 },
   landscape: { width: 1344, height: 768 },
@@ -114,6 +141,11 @@ const sseHeaders = (): Headers => new Headers({
 const encodeSse = (payload: unknown): Uint8Array =>
   new TextEncoder().encode(`data: ${JSON.stringify(payload)}\n\n`);
 
+const getClientId = (request: Request): string => {
+  const value = request.headers.get("x-neurondeck-client") ?? "";
+  return /^[a-zA-Z0-9_-]{8,64}$/.test(value) ? value : "anonymous";
+};
+
 const detectImageMime = (encoded: string): string => {
   if (encoded.startsWith("iVBOR")) return "image/png";
   if (encoded.startsWith("UklGR")) return "image/webp";
@@ -129,6 +161,11 @@ const bytesToBase64 = (bytes: Uint8Array): string => {
     binary += String.fromCharCode(...chunk);
   }
   return btoa(binary);
+};
+
+const base64ToBytes = (encoded: string): Uint8Array => {
+  const decoded = atob(encoded);
+  return Uint8Array.from(decoded, (character) => character.charCodeAt(0));
 };
 
 const coerceBytes = (value: unknown): Uint8Array => {
@@ -162,17 +199,17 @@ const readStreamBytes = async (stream: ReadableStream): Promise<Uint8Array> => {
   return bytes;
 };
 
-const normalizeImageOutput = async (result: unknown): Promise<string> => {
+const normalizeImageBytes = async (result: unknown): Promise<{ bytes: Uint8Array; mimeType: string }> => {
   if (result instanceof Response) {
     if (!result.body) throw new Error("The image model returned an empty response.");
     const bytes = await readStreamBytes(result.body);
     const encoded = bytesToBase64(bytes);
     const mime = result.headers.get("content-type")?.split(";")[0] || detectImageMime(encoded);
-    return `data:${mime};base64,${encoded}`;
+    return { bytes, mimeType: mime };
   }
   if (result instanceof ReadableStream) {
-    const encoded = bytesToBase64(await readStreamBytes(result));
-    return `data:${detectImageMime(encoded)};base64,${encoded}`;
+    const bytes = await readStreamBytes(result);
+    return { bytes, mimeType: detectImageMime(bytesToBase64(bytes)) };
   }
 
   const raw = typeof result === "string"
@@ -183,13 +220,22 @@ const normalizeImageOutput = async (result: unknown): Promise<string> => {
   if (typeof raw !== "string" || !raw.length) {
     throw new Error("The image model did not return image data.");
   }
-  if (raw.startsWith("data:image/")) return raw;
+  if (raw.startsWith("data:image/")) {
+    const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/s.exec(raw);
+    if (!match) throw new Error("The image model returned invalid image data.");
+    return { bytes: base64ToBytes(match[2].replace(/\s+/g, "")), mimeType: match[1] };
+  }
 
   const binaryLike = raw.charCodeAt(0) > 127 || raw.includes("\0");
-  const encoded = binaryLike
-    ? bytesToBase64(Uint8Array.from(raw, (character) => character.charCodeAt(0) & 0xff))
-    : raw.replace(/\s+/g, "");
-  return `data:${detectImageMime(encoded)};base64,${encoded}`;
+  const bytes = binaryLike
+    ? Uint8Array.from(raw, (character) => character.charCodeAt(0) & 0xff)
+    : base64ToBytes(raw.replace(/\s+/g, ""));
+  return { bytes, mimeType: detectImageMime(bytesToBase64(bytes)) };
+};
+
+const normalizeImageOutput = async (result: unknown): Promise<string> => {
+  const { bytes, mimeType } = await normalizeImageBytes(result);
+  return `data:${mimeType};base64,${bytesToBase64(bytes)}`;
 };
 
 const buildImageInput = (
@@ -248,6 +294,107 @@ const generateImage = async (
     seed,
     elapsedMs: Math.max(1, Math.round(performance.now() - startedAt)),
   };
+};
+
+const imageExtension = (mimeType: string): string => {
+  if (mimeType === "image/png") return "png";
+  if (mimeType === "image/webp") return "webp";
+  return "jpg";
+};
+
+const isImageWorkflowOutput = (value: unknown): value is ImageWorkflowOutput => {
+  if (!value || typeof value !== "object") return false;
+  const output = value as Partial<ImageWorkflowOutput>;
+  return typeof output.jobId === "string" &&
+    typeof output.clientId === "string" &&
+    typeof output.accessToken === "string" &&
+    typeof output.objectKey === "string" &&
+    typeof output.mimeType === "string" &&
+    typeof output.modelId === "string" &&
+    typeof output.modelName === "string" &&
+    typeof output.prompt === "string" &&
+    typeof output.width === "number" &&
+    typeof output.height === "number" &&
+    typeof output.seed === "number" &&
+    typeof output.elapsedMs === "number";
+};
+
+const workflowOutputToImage = (output: ImageWorkflowOutput): GeneratedImage => ({
+  id: output.jobId,
+  dataUrl: `/api/image-jobs/${output.jobId}/image.${imageExtension(output.mimeType)}?token=${encodeURIComponent(output.accessToken)}`,
+  modelId: output.modelId,
+  modelName: output.modelName,
+  prompt: output.prompt,
+  width: output.width,
+  height: output.height,
+  seed: output.seed,
+  elapsedMs: output.elapsedMs,
+});
+
+export class ImageGenerationWorkflow extends WorkflowEntrypoint<Env, ImageWorkflowParams> {
+  async run(event: WorkflowEvent<ImageWorkflowParams>, step: WorkflowStep): Promise<ImageWorkflowOutput> {
+    return step.do(
+      "generate and store image",
+      {
+        retries: { limit: 1, delay: "10 seconds", backoff: "linear" },
+        timeout: "15 minutes",
+      },
+      async () => {
+        const { accessToken, aspectRatio, clientId, jobId, modelId, prompt } = event.payload;
+        if (!isImageModelId(modelId)) throw new Error("Unsupported image model.");
+        const model = getImageModel(modelId);
+        const { width, height } = imageDimensions[aspectRatio];
+        const seed = Math.floor(Math.random() * 2_147_483_647);
+        const startedAt = performance.now();
+        const result = await (this.env.AI as WorkersAiBinding).run(
+          model.id,
+          buildImageInput(model.id, prompt, width, height, seed),
+        );
+        const { bytes, mimeType } = await normalizeImageBytes(result);
+        const objectKey = `image-jobs/${jobId}`;
+        await this.env.IMAGE_RESULTS.put(objectKey, bytes, {
+          httpMetadata: { contentType: mimeType },
+          customMetadata: { accessToken, clientId },
+        });
+        return {
+          accessToken,
+          clientId,
+          elapsedMs: Math.max(1, Math.round(performance.now() - startedAt)),
+          height,
+          jobId,
+          mimeType,
+          modelId: model.id,
+          modelName: model.name,
+          objectKey,
+          prompt,
+          seed,
+          width,
+        };
+      },
+    );
+  }
+}
+
+const waitForWorkflowOutput = async (
+  instance: WorkflowInstance,
+  timeoutMs = 16 * 60 * 1_000,
+): Promise<ImageWorkflowOutput> => {
+  const deadline = Date.now() + timeoutMs;
+  let attempt = 0;
+  while (Date.now() < deadline) {
+    const status = await instance.status();
+    if (status.status === "complete") {
+      if (!isImageWorkflowOutput(status.output)) throw new Error("The image workflow returned an invalid result.");
+      return status.output;
+    }
+    if (status.status === "errored" || status.status === "terminated") {
+      throw new Error(status.error?.message || "The image workflow failed.");
+    }
+    const delay = Math.min(5_000, 1_000 + attempt * 250);
+    attempt += 1;
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
+  throw new Error("The image workflow is still running after the extended timeout.");
 };
 
 const decodeImageDataUrl = (dataUrl: string): number[] => {
@@ -320,6 +467,58 @@ const handleAttachmentConversion = async (request: Request, env: Env): Promise<R
     });
     return apiError("The file could not be converted.", 502, "conversion_failed");
   }
+};
+
+const imageJobRoute = /^\/api\/image-jobs\/([0-9a-f-]{36})(?:\/image\.(?:png|webp|jpg))?$/;
+
+const handleImageJobStatus = async (request: Request, env: Env, jobId: string): Promise<Response> => {
+  if (!isSameOrigin(request)) return apiError("Cross-origin job access is not allowed.", 403, "origin_rejected");
+  const clientId = getClientId(request);
+  if (clientId === "anonymous") return apiError("A valid client id is required.", 401, "client_required");
+
+  try {
+    const instance = await env.IMAGE_WORKFLOW.get(jobId);
+    const status = await instance.status();
+    if (status.status === "complete") {
+      if (!isImageWorkflowOutput(status.output)) {
+        return apiError("The image job returned an invalid result.", 502, "image_job_invalid");
+      }
+      if (status.output.clientId !== clientId) {
+        return apiError("This image job belongs to another client.", 403, "job_forbidden");
+      }
+      return json({ status: "complete", image: workflowOutputToImage(status.output) });
+    }
+    if (status.status === "errored" || status.status === "terminated") {
+      return json({
+        status: "error",
+        error: { message: status.error?.message || "The image job failed." },
+      });
+    }
+    if (status.status === "unknown") return apiError("Image job not found.", 404, "job_not_found");
+    return json({ status: status.status });
+  } catch (error) {
+    console.error("Image job status failed", {
+      jobId,
+      message: error instanceof Error ? error.message : "Unknown image job error",
+    });
+    return apiError("The image job status is unavailable.", 502, "image_job_unavailable");
+  }
+};
+
+const handleImageJobResult = async (request: Request, env: Env, jobId: string): Promise<Response> => {
+  const token = new URL(request.url).searchParams.get("token") ?? "";
+  if (!/^[a-f0-9]{32}$/.test(token)) return apiError("A valid image token is required.", 401, "image_token_required");
+  const object = await env.IMAGE_RESULTS.get(`image-jobs/${jobId}`);
+  if (!object) return apiError("Generated image not found.", 404, "image_not_found");
+  if (object.customMetadata?.accessToken !== token) {
+    return apiError("The image token is invalid.", 403, "image_forbidden");
+  }
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set("cache-control", "private, max-age=3600");
+  headers.set("content-disposition", `inline; filename="neurondeck-${jobId}.${imageExtension(headers.get("content-type") || "image/jpeg")}"`);
+  headers.set("x-content-type-options", "nosniff");
+  return new Response(object.body, { headers });
 };
 
 interface NormalizedToolCall {
@@ -512,9 +711,36 @@ const handleToolChat = (
           return `Image generation failed: ${message}`;
         }
 
+        let jobId: string | undefined;
         sendImageState({ status: "generating", modelId: imageModel.id, modelName: imageModel.name, prompt });
         try {
-          const image = await generateImage(ai, imageModel.id, prompt, aspectRatio);
+          let image: GeneratedImage;
+          if (imageModel.id === "@cf/black-forest-labs/flux-2-dev") {
+            jobId = crypto.randomUUID();
+            const accessToken = Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+            const instance = await env.IMAGE_WORKFLOW.create({
+              id: jobId,
+              params: {
+                accessToken,
+                aspectRatio,
+                clientId: getClientId(request),
+                jobId,
+                modelId: imageModel.id,
+                prompt,
+              },
+              retention: { successRetention: "1 day", errorRetention: "1 day" },
+            });
+            sendImageState({
+              status: "generating",
+              modelId: imageModel.id,
+              modelName: imageModel.name,
+              prompt,
+              jobId,
+            });
+            image = workflowOutputToImage(await waitForWorkflowOutput(instance));
+          } else {
+            image = await generateImage(ai, imageModel.id, prompt, aspectRatio);
+          }
           imageInvocationSucceeded = true;
           send({ generated_image: image });
           return `Image generated successfully with ${image.modelName} at ${image.width}x${image.height} (seed ${image.seed}). ` +
@@ -528,7 +754,7 @@ const handleToolChat = (
           const message = prefersChinese
             ? "所选生图模型暂时无法完成请求，请稍后重试或更换模型。"
             : "The selected image model could not complete the request. Try again or choose another model.";
-          sendImageState({ status: "error", modelId: imageModel.id, modelName: imageModel.name, prompt, message });
+          sendImageState({ status: "error", modelId: imageModel.id, modelName: imageModel.name, prompt, message, jobId });
           return `Image generation failed: ${message}`;
         }
       };
@@ -794,6 +1020,13 @@ export default {
       });
       response.headers.set("cache-control", "public, max-age=900, stale-while-revalidate=3600");
       return response;
+    }
+
+    const imageJobMatch = imageJobRoute.exec(url.pathname);
+    if (request.method === "GET" && imageJobMatch) {
+      return url.pathname.includes("/image.")
+        ? handleImageJobResult(request, env, imageJobMatch[1])
+        : handleImageJobStatus(request, env, imageJobMatch[1]);
     }
 
     if (request.method === "POST" && url.pathname === "/api/chat") {

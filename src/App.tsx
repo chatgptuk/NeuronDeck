@@ -57,6 +57,8 @@ import { loadWorkspace, saveWorkspace } from "./lib/storage";
 import { hasRenderableMessageOutput } from "./lib/message-output";
 import { getMessageContentForRequest } from "./lib/chat-context";
 import { isRecoverableStreamError, waitForPageVisible } from "./lib/stream-recovery";
+import { waitForImageJob } from "./lib/image-jobs";
+import { recoverInterruptedMessage } from "./lib/workspace-recovery";
 import { formatElapsedDuration, formatMessageTimestamp } from "./lib/time";
 import {
   DEFAULT_IMAGE_MODEL_ID,
@@ -210,6 +212,7 @@ function App() {
   const composerEditorRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const messageEndRef = useRef<HTMLDivElement | null>(null);
+  const resumedImageJobsRef = useRef(false);
 
   const activeConversation =
     workspace.conversations.find((conversation) => conversation.id === workspace.activeConversationId) ??
@@ -249,6 +252,9 @@ function App() {
             (hasStoredTokenValue && conversation.maxTokens !== 2_048);
           return {
             ...conversation,
+            messages: conversation.messages.map((message) =>
+              recoverInterruptedMessage(message, translations[language].generationInterrupted),
+            ),
             modelId,
             imageModelId: isImageModelId(conversation.imageModelId)
               ? conversation.imageModelId
@@ -363,6 +369,56 @@ function App() {
     [updateConversation],
   );
 
+  useEffect(() => {
+    if (!hydrated || resumedImageJobsRef.current) return;
+    resumedImageJobsRef.current = true;
+    const controllers: AbortController[] = [];
+    for (const conversation of workspace.conversations) {
+      for (const message of conversation.messages) {
+        const jobId = message.imageGeneration?.status === "generating"
+          ? message.imageGeneration.jobId
+          : undefined;
+        if (!jobId || message.generatedImages?.length) continue;
+        const controller = new AbortController();
+        controllers.push(controller);
+        void waitForImageJob({
+          jobId,
+          clientId: getClientId(),
+          signal: controller.signal,
+          language,
+        }).then((image) => {
+          updateMessage(conversation.id, message.id, (current) => ({
+            ...current,
+            content: current.content || t.imageGeneratedFallback,
+            generatedImages: current.generatedImages?.some((item) => item.id === image.id)
+              ? current.generatedImages
+              : [...(current.generatedImages ?? []), image],
+            imageGeneration: {
+              status: "complete",
+              modelId: image.modelId,
+              modelName: image.modelName,
+              prompt: image.prompt,
+            },
+            status: "complete",
+          }));
+        }).catch((error) => {
+          if (controller.signal.aborted) return;
+          updateMessage(conversation.id, message.id, (current) => ({
+            ...current,
+            content: current.content || (error instanceof Error ? error.message : t.generationFailed),
+            imageGeneration: {
+              ...current.imageGeneration!,
+              status: "error",
+              message: error instanceof Error ? error.message : t.generationFailed,
+            },
+            status: "error",
+          }));
+        });
+      }
+    }
+    return () => controllers.forEach((controller) => controller.abort());
+  }, [hydrated]);
+
   const generateResponse = useCallback(
     async (conversation: Conversation, contextMessages: ChatMessage[], assistantId: string) => {
       const controller = new AbortController();
@@ -372,6 +428,31 @@ function App() {
       let content = "";
       let reasoning = "";
       let generatedImages: GeneratedImage[] = [];
+      let pendingImageJobId: string | undefined;
+
+      const recoverPendingImage = async (): Promise<boolean> => {
+        if (!pendingImageJobId) return false;
+        const image = await waitForImageJob({
+          jobId: pendingImageJobId,
+          clientId: getClientId(),
+          signal: controller.signal,
+          language,
+        });
+        pendingImageJobId = undefined;
+        if (!generatedImages.some((item) => item.id === image.id)) generatedImages = [...generatedImages, image];
+        updateMessage(conversation.id, assistantId, (message) => ({
+          ...message,
+          generatedImages,
+          imageGeneration: {
+            status: "complete",
+            modelId: image.modelId,
+            modelName: image.modelName,
+            prompt: image.prompt,
+          },
+          status: "streaming",
+        }));
+        return true;
+      };
 
       const requestMessages = pruneAttachmentsForRequest(contextMessages, conversation.modelId);
       const apiMessages = [
@@ -422,7 +503,14 @@ function App() {
               }
               if (event.content) content += event.content;
               if (event.reasoning) reasoning += event.reasoning;
-              if (event.generatedImage) generatedImages = [...generatedImages, event.generatedImage];
+              if (event.imageGeneration?.status === "generating" && event.imageGeneration.jobId) {
+                pendingImageJobId = event.imageGeneration.jobId;
+              }
+              if (event.imageGeneration?.status === "error") pendingImageJobId = undefined;
+              if (event.generatedImage) {
+                pendingImageJobId = undefined;
+                generatedImages = [...generatedImages, event.generatedImage];
+              }
               if (event.content || event.reasoning || event.generatedImage || event.imageGeneration) {
                 updateMessage(conversation.id, assistantId, (message) => ({
                   ...message,
@@ -442,10 +530,15 @@ function App() {
                 }));
               }
             });
+            await recoverPendingImage();
             break;
           } catch (error) {
             if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
             if (isRecoverableStreamError(error) && generatedImages.length) break;
+            if (isRecoverableStreamError(error) && pendingImageJobId) {
+              await recoverPendingImage();
+              break;
+            }
             if (!isRecoverableStreamError(error) || recoveryAttempts >= 1) throw error;
 
             recoveryAttempts += 1;

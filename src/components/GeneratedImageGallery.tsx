@@ -5,8 +5,8 @@ import type { GeneratedImage, ImageGenerationState } from "../types";
 import { CreationGlyph } from "./ProductIcons";
 
 const extensionForDataUrl = (dataUrl: string): string => {
-  if (dataUrl.startsWith("data:image/png")) return "png";
-  if (dataUrl.startsWith("data:image/webp")) return "webp";
+  if (dataUrl.startsWith("data:image/png") || dataUrl.includes("/image.png")) return "png";
+  if (dataUrl.startsWith("data:image/webp") || dataUrl.includes("/image.webp")) return "webp";
   return "jpg";
 };
 

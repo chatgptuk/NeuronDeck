@@ -47,6 +47,7 @@ export interface ImageGenerationState {
   status: "generating" | "complete" | "error";
   modelId: string;
   modelName: string;
+  jobId?: string;
   prompt?: string;
   message?: string;
 }
