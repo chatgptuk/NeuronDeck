@@ -67,7 +67,9 @@ describe("worker multimodal requests", () => {
     );
 
     expect(response.status).toBe(200);
-    const input = run.mock.calls[0][1] as { image: number[] };
+    const input = run.mock.calls[0][1] as { prompt: string; image: number[] };
     expect(input.image).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+    expect(input.prompt).toContain("USER: Describe it");
+    expect(input).not.toHaveProperty("messages");
   });
 });

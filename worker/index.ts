@@ -86,6 +86,19 @@ const decodeImageDataUrl = (dataUrl: string): number[] => {
   return Array.from(decoded, (character) => character.charCodeAt(0));
 };
 
+const legacyVisionPrompt = (messages: ReturnType<typeof buildAiMessages>["messages"]): string =>
+  messages
+    .map((message) => {
+      const content = typeof message.content === "string"
+        ? message.content
+        : message.content
+            .filter((part) => part.type === "text")
+            .map((part) => ("text" in part ? part.text : ""))
+            .join("\n");
+      return `${message.role.toUpperCase()}: ${content}`;
+    })
+    .join("\n\n");
+
 const handleAttachmentConversion = async (request: Request, env: Env): Promise<Response> => {
   if (!isSameOrigin(request)) {
     return apiError("Cross-origin file conversion is not allowed.", 403, "origin_rejected");
@@ -174,7 +187,7 @@ const handleChat = async (request: Request, env: Env): Promise<Response> => {
   }
   const builtInput = buildAiMessages(parsedMessages.messages, legacyVision);
   const modelInput = legacyVision && builtInput.image
-    ? { messages: builtInput.messages, image: decodeImageDataUrl(builtInput.image) }
+    ? { prompt: legacyVisionPrompt(builtInput.messages), image: decodeImageDataUrl(builtInput.image) }
     : builtInput;
 
   const temperature =
