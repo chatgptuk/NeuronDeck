@@ -460,6 +460,18 @@ input:focus-visible {
 }
 
 @media (max-width: 780px) {
+  :root {
+    --muted: #68746d;
+    --muted-strong: #46534c;
+    --line: rgba(38, 58, 49, 0.12);
+    --line-strong: rgba(38, 58, 49, 0.2);
+  }
+  :root[data-theme="dark"] {
+    --muted: #aebbb3;
+    --muted-strong: #ced8d2;
+    --line: rgba(231, 241, 234, 0.11);
+    --line-strong: rgba(231, 241, 234, 0.19);
+  }
   .app-shell { gap: 0; padding: 0; }
   .main-panel { border: 0; border-radius: 0; box-shadow: none; }
   .sidebar { position: fixed; top: 10px; bottom: 10px; left: 10px; width: min(300px, calc(100vw - 28px)); border-radius: 24px; box-shadow: 24px 0 70px rgba(42, 57, 49, 0.2); transform: translateX(calc(-100% - 20px)); transition: transform 210ms ease; }
@@ -469,23 +481,68 @@ input:focus-visible {
   .mobile-scrim { position: fixed; z-index: 15; display: block; border: 0; background: rgba(37, 48, 42, 0.35); backdrop-filter: blur(4px); inset: 0; }
   .topbar { height: 64px; flex-basis: 64px; padding: 0 12px; }
   .mobile-menu { margin-right: 3px; }
-  .model-trigger > span:nth-child(2) { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .model-trigger > span:nth-child(2) { max-width: 150px; overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+  .model-trigger small { font-size: 10px; }
+  .brand-copy span { font-size: 11px; }
+  .new-chat-button { font-size: 13px; }
+  .new-chat-button span { font-size: 10px; }
+  .sidebar-label { font-size: 11px; }
+  .conversation-title { font-size: 13px; }
+  .conversation-meta,
+  .storage-card strong,
+  .storage-card span,
+  .sidebar-action { font-size: 11px; }
   .welcome-state { width: calc(100% - 40px); align-items: flex-start; padding: 30px 0 38px; }
+  .eyebrow { font-size: 11px; }
   .welcome-state h1 { font-size: clamp(36px, 10.5vw, 48px); }
   .starter-grid { grid-template-columns: 1fr; gap: 0; margin-top: 38px; }
   .starter-grid button { min-height: 88px; }
+  .starter-grid strong { font-size: 14px; }
+  .starter-grid span { font-size: 12px; line-height: 1.65; }
   .messages { width: calc(100% - 34px); padding-top: 28px; }
-  .message-content { margin-left: 0; }
+  .message-identity strong { font-size: 13px; }
+  .message-identity span { font-size: 11px; }
+  .message-content { margin-left: 0; font-size: 15px; line-height: 1.78; }
   .message.user .message-content { max-width: 88%; }
   .message-actions { margin-left: -4px; }
+  .message-actions button { font-size: 11px; }
+  .code-block code { font-size: 12px; }
+  .code-copy { font-size: 10px; }
+  .reasoning-block { font-size: 13px; line-height: 1.68; }
+  .reasoning-block summary { font-size: 11px; }
+  .attachment-meta strong { font-size: 12px; }
+  .attachment-meta span { font-size: 10px; }
   .composer-wrap { width: calc(100% - 22px); padding-bottom: 12px; }
   .composer-wrap::before { right: 0; left: 0; }
+  .composer-badges button,
+  .composer-badges > span { font-size: 10px; }
+  .composer-note { font-size: 10px; line-height: 1.45; }
+  .attachment-status,
+  .attachment-error { font-size: 11px; }
   .inspector { top: 8px; right: 8px; bottom: 8px; }
   .inspector.open { width: min(350px, calc(100% - 16px)); }
+  .inspector-header h2 { font-size: 23px; }
+  .inspector-description { font-size: 13px; line-height: 1.7; }
+  .inspector-stats span { font-size: 10px; }
+  .inspector-stats strong { font-size: 13px; }
+  .inspector-section label,
+  .section-title { font-size: 11px; }
+  .range-label output { font-size: 12px; }
+  .range-hints { font-size: 10px; }
+  .number-hint { font-size: 10px; line-height: 1.55; }
+  .inspector-capabilities span { font-size: 10px; }
+  .change-model { font-size: 12px; }
   .composer textarea,
   .model-search input,
   .inspector-section textarea,
   .number-input { font-size: 16px; }
+  .filter-pill { font-size: 11px; }
+  .model-card-title h3 { font-size: 14px; }
+  .model-card-title span { font-size: 11px; }
+  .model-card > p { min-height: 42px; font-size: 12px; line-height: 1.7; }
+  .capability { font-size: 10px; }
+  .price-row { font-size: 10px; }
+  .picker-footer { font-size: 10px; }
   .model-grid { grid-template-columns: 1fr; }
   .model-picker { height: calc(100dvh - 20px); max-height: calc(100dvh - 20px); border-radius: 24px; }
   .modal-backdrop { padding: 10px; }
@@ -507,14 +564,14 @@ input:focus-visible {
 @media (max-width: 480px) {
   .topbar { height: 60px; flex-basis: 60px; }
   .model-trigger { min-width: 0; padding-right: 4px; }
-  .model-trigger > span:nth-child(2) { max-width: 116px; font-size: 10px; }
+  .model-trigger > span:nth-child(2) { max-width: 116px; font-size: 12px; }
   .topbar-actions { gap: 0; }
   .language-toggle { width: 36px; justify-content: center; padding: 0; }
   .language-toggle span { display: none; }
   .welcome-state { width: calc(100% - 32px); }
   .welcome-orbit { width: 66px; height: 50px; margin-bottom: 23px; }
   .welcome-state h1 { margin-top: 13px; font-size: 36px; letter-spacing: -0.045em; }
-  .welcome-state > p { font-size: 11px; line-height: 1.65; }
+  .welcome-state > p { font-size: 14px; line-height: 1.7; }
   .starter-grid button:nth-child(n + 3) { display: none; }
   .composer { border-radius: 20px; padding: 12px 12px 10px 14px; }
   .composer textarea { font-size: 16px; }
