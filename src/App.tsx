@@ -74,6 +74,7 @@ import {
   NeuronGlyph,
   PerspectiveGlyph,
 } from "./components/ProductIcons";
+import { ProviderLogo } from "./components/ProviderLogo";
 
 const MarkdownMessage = lazy(() =>
   import("./components/MarkdownMessage").then((module) => ({ default: module.MarkdownMessage })),
@@ -856,7 +857,7 @@ function App() {
             <Menu size={20} />
           </button>
           <button className="model-trigger" onClick={() => setModelPickerOpen(true)} type="button">
-            <span className="model-dot" />
+            <span className="active-model-mark"><ProviderLogo provider={activeModel.provider} /></span>
             <span><small>{activeModel.provider}</small>{activeModel.name}</span>
             <ChevronDown size={16} />
           </button>
@@ -909,7 +910,7 @@ function App() {
                         }}>
                           <span className="starter-icon"><StarterIcon /></span>
                           <strong>{item.label}</strong>
-                          <span>{item.prompt}</span>
+                          <span className="starter-prompt">{item.prompt}</span>
                         </button>
                       );
                     })}
@@ -1054,7 +1055,7 @@ function App() {
                       </button>
                     ) : null}
                     <div className="composer-badges">
-                      <button onClick={() => setModelPickerOpen(true)} type="button"><span className="model-dot" />{activeModel.name}</button>
+                      <button onClick={() => setModelPickerOpen(true)} type="button"><span className="active-model-mark"><ProviderLogo provider={activeModel.provider} /></span>{activeModel.name}</button>
                       {activeModelSupportsTools ? (
                         <span className="image-tool-badge"><CreationGlyph />{t.imageToolBadge(activeImageModel.name)}</span>
                       ) : null}

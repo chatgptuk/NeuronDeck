@@ -13,7 +13,8 @@ import { useMemo, useState } from "react";
 import { getCapabilityLabel, getModelDescription, translations, type Language } from "../i18n";
 import { formatContextWindow, formatPrice, searchModels, sortModelsByPrice } from "../lib/models";
 import type { ModelInfo } from "../types";
-import { ContextGlyph, NeuronGlyph } from "./ProductIcons";
+import { ContextGlyph } from "./ProductIcons";
+import { ProviderLogo } from "./ProviderLogo";
 
 type Filter = "all" | "reasoning" | "vision" | "tools" | "paid" | "lora";
 
@@ -24,19 +25,6 @@ const capabilityIcon = {
   vision: Eye,
   tools: Wrench,
   coding: Code2,
-};
-
-const providerLogos: Record<string, string> = {
-  DeepSeek: "/model-logos/deepseek.svg",
-  Google: "/model-logos/google.svg",
-  IBM: "/model-logos/ibm.svg",
-  Meta: "/model-logos/meta.svg",
-  "Mistral AI": "/model-logos/mistral.svg",
-  "Moonshot AI": "/model-logos/moonshot.svg",
-  NVIDIA: "/model-logos/nvidia.svg",
-  OpenAI: "/model-logos/openai.svg",
-  Qwen: "/model-logos/qwen.svg",
-  "Z.ai": "/model-logos/zai.svg",
 };
 
 interface ModelPickerProps {
@@ -133,11 +121,7 @@ export function ModelPicker({
             >
               <div className="model-card-top">
                 <div className="provider-mark" title={model.provider}>
-                  {providerLogos[model.provider] ? (
-                    <img alt="" aria-hidden="true" src={providerLogos[model.provider]} />
-                  ) : (
-                    <NeuronGlyph className="provider-fallback-glyph" />
-                  )}
+                  <ProviderLogo provider={model.provider} fallbackClassName="provider-fallback-glyph" />
                 </div>
                 <div className="model-card-title">
                   <h3>{model.name}</h3>

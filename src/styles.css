@@ -228,7 +228,9 @@ input:focus-visible {
 .model-trigger:hover { border-color: var(--line); background: var(--accent-pale); }
 .model-trigger > span:nth-child(2) { display: flex; flex-direction: column; gap: 1px; font-size: 12px; font-weight: 650; }
 .model-trigger small { color: var(--muted); font-size: 9px; font-weight: 500; letter-spacing: 0.035em; }
-.model-dot { display: block; width: 8px; height: 8px; flex: 0 0 8px; border: 2px solid color-mix(in srgb, var(--accent) 36%, transparent); border-radius: 50%; background: var(--accent-bright); box-shadow: 0 0 0 5px var(--accent-soft); }
+.active-model-mark { display: grid; width: 22px; height: 22px; flex: 0 0 22px; place-items: center; border: 1px solid rgba(50, 75, 62, 0.09); border-radius: 7px 9px 7px 9px; background: color-mix(in srgb, var(--panel-raised) 94%, var(--accent-pale)); box-shadow: 0 2px 7px rgba(38, 60, 49, 0.07); overflow: hidden; }
+.active-model-mark img { display: block; width: 100%; height: 100%; object-fit: contain; padding: 3px; }
+.active-model-mark svg { width: 14px; height: 14px; color: var(--accent-bright); }
 .topbar-actions { display: flex; align-items: center; gap: 3px; margin-left: auto; }
 .language-toggle { display: inline-flex; height: 38px; align-items: center; gap: 6px; border: 1px solid transparent; border-radius: 11px; background: transparent; padding: 0 10px; color: var(--muted-strong); font-size: 11px; font-weight: 600; }
 .language-toggle:hover { border-color: var(--line); background: var(--panel-soft); color: var(--text); }
@@ -251,11 +253,11 @@ input:focus-visible {
 .starter-grid button::after { position: absolute; right: 2px; top: 20px; color: var(--muted); content: "↗"; font-size: 14px; opacity: 0; transition: opacity 160ms ease, transform 160ms ease; }
 .starter-grid button:hover { border-color: var(--accent); transform: translateY(-2px); }
 .starter-grid button:hover::after { opacity: 1; transform: translate(2px, -2px); }
-.starter-icon { display: grid; width: 34px; height: 34px; grid-row: 1 / 3; place-items: center; border: 1px solid rgba(63, 104, 85, 0.08); border-radius: 10px; background: var(--accent-pale); color: var(--accent-bright); transition: border-color 160ms ease, background 160ms ease, transform 160ms ease; }
-.starter-icon svg { width: 19px; height: 19px; }
+.starter-icon { display: grid; width: 36px; height: 36px; grid-row: 1 / 3; place-items: center; border: 1px solid rgba(63, 104, 85, 0.08); border-radius: 11px 13px 11px 13px; background: var(--accent-pale); color: var(--accent-bright); overflow: hidden; transition: border-color 160ms ease, background 160ms ease, transform 160ms ease; }
+.starter-icon svg { display: block; width: 17px; height: 17px; }
 .starter-grid button:hover .starter-icon { border-color: color-mix(in srgb, var(--accent) 26%, var(--line)); background: var(--accent-soft); transform: translateY(-1px); }
 .starter-grid strong { margin: 1px 24px 7px 0; font-size: 14px; font-weight: 650; }
-.starter-grid span { display: -webkit-box; overflow: hidden; color: var(--muted); font-size: 11px; line-height: 1.62; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.starter-grid .starter-prompt { display: -webkit-box; overflow: hidden; color: var(--muted); font-size: 11px; line-height: 1.62; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 
 .messages { width: min(780px, calc(100% - 72px)); margin: 0 auto; padding: 48px 0 40px; }
 .message { position: relative; margin-bottom: 46px; }
@@ -417,6 +419,8 @@ input:focus-visible {
 .composer-badges > span { display: flex; align-items: center; gap: 7px; border: 0; border-radius: 9px; background: transparent; padding: 6px 7px; color: var(--muted-strong); font-size: 10px; }
 .composer-badges button { max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer-badges button:hover { background: var(--panel-soft); color: var(--text); }
+.composer-badges .active-model-mark { width: 18px; height: 18px; flex-basis: 18px; border-radius: 6px 7px 6px 7px; box-shadow: none; }
+.composer-badges .active-model-mark img { padding: 2.5px; }
 .composer-badges > span.image-tool-badge { color: var(--accent-bright); }
 .image-tool-badge svg { width: 13px; height: 13px; }
 .send-button { display: grid; width: 38px; height: 38px; place-items: center; margin-left: auto; border: 0; border-radius: 12px; background: var(--accent-bright); color: #f7fbf8; box-shadow: 0 7px 17px rgba(44, 91, 70, 0.2); transition: transform 150ms ease, box-shadow 150ms ease; }
@@ -568,7 +572,7 @@ input:focus-visible {
   .starter-grid { grid-template-columns: 1fr; gap: 0; margin-top: 38px; }
   .starter-grid button { min-height: 88px; }
   .starter-grid strong { font-size: 14px; }
-  .starter-grid span { font-size: 12px; line-height: 1.65; }
+  .starter-grid .starter-prompt { font-size: 12px; line-height: 1.65; }
   .messages { width: calc(100% - 34px); padding-top: 28px; }
   .message-identity strong { font-size: 13px; }
   .message-identity span { font-size: 11px; }
