@@ -3,6 +3,7 @@ import {
   FALLBACK_MODELS,
   formatContextWindow,
   searchModels,
+  sortModelsByPrice,
   supportsMultimodalAttachments,
 } from "./models";
 
@@ -31,5 +32,19 @@ describe("Cloudflare-hosted chat catalog", () => {
   it("formats large context windows clearly", () => {
     expect(formatContextWindow(128000)).toBe("128K context");
     expect(formatContextWindow(1048576)).toBe("1.0M context");
+  });
+
+  it("sorts priced models by output then input cost and leaves unpriced models last", () => {
+    const models = [
+      FALLBACK_MODELS.find((model) => model.id === "@cf/openai/gpt-oss-120b")!,
+      FALLBACK_MODELS.find((model) => model.id === "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b")!,
+      FALLBACK_MODELS.find((model) => model.id === "@cf/google/gemma-2b-it-lora")!,
+    ];
+
+    expect(sortModelsByPrice(models).map((model) => model.id)).toEqual([
+      "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
+      "@cf/openai/gpt-oss-120b",
+      "@cf/google/gemma-2b-it-lora",
+    ]);
   });
 });

@@ -40,6 +40,11 @@ import {
   supportsMultimodalAttachments,
 } from "./lib/models";
 import {
+  clampOutputTokens,
+  getOutputTokenPolicy,
+  getOutputTokenPolicyForModel,
+} from "./lib/output-tokens";
+import {
   ATTACHMENT_ACCEPT,
   MAX_ATTACHMENTS_PER_MESSAGE,
   MAX_DOCUMENT_BYTES,
@@ -93,13 +98,15 @@ const pruneAttachmentsForRequest = (messages: ChatMessage[], modelId: string): C
 const createConversation = (language: Language, modelId = DEFAULT_MODEL_ID): Conversation => {
   const timestamp = now();
   const t = translations[language];
+  const outputTokenPolicy = getOutputTokenPolicyForModel(modelId);
   return {
     id: id(),
     title: t.defaultConversation,
     modelId,
     systemPrompt: t.defaultSystemPrompt,
     temperature: 0.6,
-    maxTokens: 2048,
+    maxTokens: outputTokenPolicy.recommended,
+    maxTokensCustomized: false,
     messages: [],
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -160,6 +167,7 @@ function App() {
     workspace.conversations[0];
   const activeModel = getModel(models, activeConversation.modelId);
   const activeModelSupportsAttachments = supportsMultimodalAttachments(activeModel);
+  const activeOutputTokenPolicy = getOutputTokenPolicy(activeModel.contextWindow);
   const attachmentTarget = `${activeConversation.id}:${activeModel.id}`;
   const attachmentTargetRef = useRef(attachmentTarget);
   attachmentTargetRef.current = attachmentTarget;
@@ -170,15 +178,26 @@ function App() {
       if (!active) return;
       if (saved?.conversations?.length) {
         const validIds = new Set(FALLBACK_MODELS.map((model) => model.id));
-        const conversations = saved.conversations.map((conversation) => ({
-          ...conversation,
-          modelId: validIds.has(conversation.modelId) ? conversation.modelId : DEFAULT_MODEL_ID,
-          systemPrompt:
-            conversation.systemPrompt === translations.zh.defaultSystemPrompt ||
-            conversation.systemPrompt === translations.en.defaultSystemPrompt
-              ? translations[language].defaultSystemPrompt
-              : conversation.systemPrompt,
-        }));
+        const conversations = saved.conversations.map((conversation) => {
+          const modelId = validIds.has(conversation.modelId) ? conversation.modelId : DEFAULT_MODEL_ID;
+          const outputTokenPolicy = getOutputTokenPolicyForModel(modelId);
+          const hasStoredTokenValue = Number.isInteger(conversation.maxTokens) && conversation.maxTokens >= 64;
+          const maxTokensCustomized = conversation.maxTokensCustomized ??
+            (hasStoredTokenValue && conversation.maxTokens !== 2_048);
+          return {
+            ...conversation,
+            modelId,
+            maxTokens: maxTokensCustomized
+              ? clampOutputTokens(conversation.maxTokens, outputTokenPolicy)
+              : outputTokenPolicy.recommended,
+            maxTokensCustomized,
+            systemPrompt:
+              conversation.systemPrompt === translations.zh.defaultSystemPrompt ||
+              conversation.systemPrompt === translations.en.defaultSystemPrompt
+                ? translations[language].defaultSystemPrompt
+                : conversation.systemPrompt,
+          };
+        });
         setWorkspace({ ...saved, conversations });
       }
       setHydrated(true);
@@ -627,8 +646,16 @@ function App() {
   };
 
   const selectModel = (modelId: string) => {
-    updateConversation(activeConversation.id, (conversation) => ({ ...conversation, modelId, updatedAt: now() }));
     const selectedModel = getModel(models, modelId);
+    const outputTokenPolicy = getOutputTokenPolicy(selectedModel.contextWindow);
+    updateConversation(activeConversation.id, (conversation) => ({
+      ...conversation,
+      modelId,
+      maxTokens: conversation.maxTokensCustomized
+        ? clampOutputTokens(conversation.maxTokens, outputTokenPolicy)
+        : outputTokenPolicy.recommended,
+      updatedAt: now(),
+    }));
     if (!supportsMultimodalAttachments(selectedModel)) {
       setPendingAttachments([]);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -953,11 +980,31 @@ function App() {
                 className="number-input"
                 type="number"
                 min="64"
-                max="8192"
-                step="64"
+                max={activeOutputTokenPolicy.maximum}
+                step="256"
                 value={activeConversation.maxTokens}
-                onChange={(event) => updateConversation(activeConversation.id, (conversation) => ({ ...conversation, maxTokens: Math.min(8192, Math.max(64, Number(event.target.value) || 64)), updatedAt: now() }))}
+                onChange={(event) => updateConversation(activeConversation.id, (conversation) => ({
+                  ...conversation,
+                  maxTokens: clampOutputTokens(Number(event.target.value), activeOutputTokenPolicy),
+                  maxTokensCustomized: true,
+                  updatedAt: now(),
+                }))}
               />
+              <div className="number-hint">
+                <span>{t.outputTokenRecommendation(
+                  activeOutputTokenPolicy.recommended.toLocaleString(language === "zh" ? "zh-CN" : "en"),
+                  activeOutputTokenPolicy.maximum.toLocaleString(language === "zh" ? "zh-CN" : "en"),
+                )}</span>
+                <button
+                  type="button"
+                  onClick={() => updateConversation(activeConversation.id, (conversation) => ({
+                    ...conversation,
+                    maxTokens: activeOutputTokenPolicy.recommended,
+                    maxTokensCustomized: false,
+                    updatedAt: now(),
+                  }))}
+                >{t.resetOutputTokens}</button>
+              </div>
             </div>
             <div className="inspector-section">
               <span className="section-title">{t.capabilities}</span>

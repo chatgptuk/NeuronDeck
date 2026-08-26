@@ -1,5 +1,6 @@
 import catalog from "../src/data/models.generated.json";
 import { buildAiMessages, parseApiMessages } from "../src/lib/chat-input";
+import { clampOutputTokens, getOutputTokenPolicyForModel } from "../src/lib/output-tokens";
 
 interface RateLimiter {
   limit(options: { key: string }): Promise<{ success: boolean }>;
@@ -23,7 +24,6 @@ const visionModelIds = new Set(
   catalog.models.filter((model) => (model.capabilities as string[]).includes("vision")).map((model) => model.id),
 );
 const LEGACY_VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct";
-const MAX_OUTPUT_TOKENS = 8192;
 const MAX_CONVERT_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_CONVERTED_CHARACTERS = 40_000;
 const convertibleExtensions = new Set([
@@ -194,10 +194,7 @@ const handleChat = async (request: Request, env: Env): Promise<Response> => {
     typeof body.temperature === "number" && Number.isFinite(body.temperature)
       ? Math.min(2, Math.max(0, body.temperature))
       : 0.6;
-  const maxTokens =
-    typeof body.maxTokens === "number" && Number.isInteger(body.maxTokens)
-      ? Math.min(MAX_OUTPUT_TOKENS, Math.max(64, body.maxTokens))
-      : 2048;
+  const maxTokens = clampOutputTokens(body.maxTokens, getOutputTokenPolicyForModel(body.model));
 
   try {
     const ai = env.AI as WorkersAiBinding;

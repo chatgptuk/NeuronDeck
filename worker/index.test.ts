@@ -37,6 +37,21 @@ const requestFor = (model: string) =>
     }),
   });
 
+const textRequestFor = (model: string, maxTokens?: number) =>
+  new Request("https://ai.chatgpt.org.uk/api/chat", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      origin: "https://ai.chatgpt.org.uk",
+      "x-neurondeck-client": "integration-test-client",
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: "user", content: "Write a useful answer" }],
+      ...(maxTokens == null ? {} : { maxTokens }),
+    }),
+  });
+
 describe("worker multimodal requests", () => {
   it("passes structured image content to current vision models", async () => {
     const { env, run } = createEnv();
@@ -71,5 +86,19 @@ describe("worker multimodal requests", () => {
     expect(input.image).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
     expect(input.prompt).toContain("USER: Describe it");
     expect(input).not.toHaveProperty("messages");
+  });
+});
+
+describe("worker output token policy", () => {
+  it("uses the context-aware default for a 128K model", async () => {
+    const { env, run } = createEnv();
+    await worker.fetch(textRequestFor("@cf/zai-org/glm-4.7-flash"), env as never);
+    expect(run.mock.calls[0][1]).toEqual(expect.objectContaining({ max_tokens: 8_192 }));
+  });
+
+  it("allows a larger bounded output for a 1M model", async () => {
+    const { env, run } = createEnv();
+    await worker.fetch(textRequestFor("@cf/deepseek-ai/deepseek-v4-pro-0813", 999_999), env as never);
+    expect(run.mock.calls[0][1]).toEqual(expect.objectContaining({ max_tokens: 65_536 }));
   });
 });

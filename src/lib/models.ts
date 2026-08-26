@@ -27,6 +27,24 @@ export const formatContextWindow = (tokens: number, language: Language = "en"): 
 export const formatPrice = (price?: number): string =>
   price == null ? "—" : `$${price < 0.1 ? price.toFixed(3) : price.toFixed(2)}`;
 
+export const sortModelsByPrice = (
+  models: ModelInfo[],
+  favoriteIds: string[] = [],
+): ModelInfo[] => [...models].sort((a, b) => {
+  const aHasPrice = a.prices.output != null || a.prices.input != null;
+  const bHasPrice = b.prices.output != null || b.prices.input != null;
+  if (aHasPrice !== bHasPrice) return Number(bHasPrice) - Number(aHasPrice);
+
+  const outputDifference = (b.prices.output ?? -1) - (a.prices.output ?? -1);
+  if (outputDifference) return outputDifference;
+
+  const inputDifference = (b.prices.input ?? -1) - (a.prices.input ?? -1);
+  if (inputDifference) return inputDifference;
+
+  const favoriteDifference = Number(favoriteIds.includes(b.id)) - Number(favoriteIds.includes(a.id));
+  return favoriteDifference || a.provider.localeCompare(b.provider) || a.name.localeCompare(b.name);
+});
+
 export const searchModels = (
   models: ModelInfo[],
   query: string,

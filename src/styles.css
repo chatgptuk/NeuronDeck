@@ -402,6 +402,9 @@ input:focus-visible {
 .range-hints { display: flex; color: var(--muted); font-size: 8px; }
 .range-hints span:last-child { margin-left: auto; }
 .number-input { resize: none; }
+.number-hint { display: flex; align-items: flex-start; gap: 10px; margin-top: 8px; color: var(--muted); font-size: 8px; line-height: 1.45; }
+.number-hint span { flex: 1; }
+.number-hint button { flex: 0 0 auto; border: 0; border-bottom: 1px solid color-mix(in srgb, var(--accent) 32%, transparent); background: transparent; padding: 0 0 2px; color: var(--accent-bright); font-size: inherit; }
 .inspector-capabilities { display: flex; flex-wrap: wrap; gap: 6px; }
 .inspector-capabilities span { border: 1px solid var(--line); border-radius: 999px; background: var(--accent-pale); padding: 6px 9px; color: var(--muted-strong); font-size: 8px; }
 .inspector-capabilities span.paid { border-color: color-mix(in srgb, var(--amber) 24%, transparent); color: var(--amber); }

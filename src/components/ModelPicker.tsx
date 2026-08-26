@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { getCapabilityLabel, getModelDescription, translations, type Language } from "../i18n";
-import { formatContextWindow, formatPrice, searchModels } from "../lib/models";
+import { formatContextWindow, formatPrice, searchModels, sortModelsByPrice } from "../lib/models";
 import type { ModelInfo } from "../types";
 
 type Filter = "all" | "reasoning" | "vision" | "tools" | "paid" | "lora";
@@ -69,10 +69,7 @@ export function ModelPicker({
       description: getModelDescription(model, language),
     }));
     const filtered = searchModels(localizedModels, query, filter);
-    return [...filtered].sort((a, b) => {
-      const favoriteDifference = Number(favoriteIds.includes(b.id)) - Number(favoriteIds.includes(a.id));
-      return favoriteDifference || a.provider.localeCompare(b.provider) || a.name.localeCompare(b.name);
-    });
+    return sortModelsByPrice(filtered, favoriteIds);
   }, [models, query, filter, favoriteIds, language]);
 
   return (

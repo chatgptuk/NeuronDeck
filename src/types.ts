@@ -50,6 +50,7 @@ export interface Conversation {
   systemPrompt: string;
   temperature: number;
   maxTokens: number;
+  maxTokensCustomized?: boolean;
   messages: ChatMessage[];
   createdAt: string;
   updatedAt: string;
