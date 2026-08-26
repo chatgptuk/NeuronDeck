@@ -1,4 +1,5 @@
 import catalog from "../src/data/models.generated.json";
+import { buildAiMessages, parseApiMessages } from "../src/lib/chat-input";
 
 interface RateLimiter {
   limit(options: { key: string }): Promise<{ success: boolean }>;
@@ -10,11 +11,6 @@ interface Env {
   CHAT_RATE_LIMITER: RateLimiter;
 }
 
-interface ApiMessage {
-  role: "system" | "user" | "assistant";
-  content: string;
-}
-
 interface ChatBody {
   model?: unknown;
   messages?: unknown;
@@ -23,9 +19,16 @@ interface ChatBody {
 }
 
 const modelIds = new Set(catalog.models.map((model) => model.id));
-const MAX_MESSAGES = 48;
-const MAX_TOTAL_CHARACTERS = 120_000;
+const visionModelIds = new Set(
+  catalog.models.filter((model) => (model.capabilities as string[]).includes("vision")).map((model) => model.id),
+);
+const LEGACY_VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct";
 const MAX_OUTPUT_TOKENS = 8192;
+const MAX_CONVERT_FILE_BYTES = 5 * 1024 * 1024;
+const MAX_CONVERTED_CHARACTERS = 40_000;
+const convertibleExtensions = new Set([
+  "pdf", "html", "htm", "xml", "xlsx", "xlsm", "xlsb", "xls", "et", "docx", "ods", "odt", "numbers",
+]);
 
 const json = (data: unknown, init: ResponseInit = {}): Response => {
   const headers = new Headers(init.headers);
@@ -48,23 +51,92 @@ const isSameOrigin = (request: Request): boolean => {
   }
 };
 
-const parseMessages = (messages: unknown): ApiMessage[] | null => {
-  if (!Array.isArray(messages) || messages.length === 0 || messages.length > MAX_MESSAGES) {
-    return null;
+const getRateKey = (request: Request, prefix: string): string => {
+  const clientId = request.headers.get("x-neurondeck-client") ?? "anonymous";
+  const ip = request.headers.get("cf-connecting-ip") ?? "local";
+  return `${prefix}:${ip}:${/^[a-zA-Z0-9_-]{8,64}$/.test(clientId) ? clientId : "invalid"}`;
+};
+
+const convertedFileErrorMessage: Record<string, string> = {
+  image_not_supported: "The selected model does not support image input.",
+  too_many_attachments: "There are too many attachments in this conversation.",
+  too_many_images: "There are more images than this model can process.",
+  attachment_too_large: "An attachment is too large.",
+  invalid_attachment: "An attachment is invalid.",
+  invalid_messages: "The conversation is empty, too large, or contains invalid messages.",
+};
+
+interface MarkdownConversionResult {
+  format: "markdown" | "text" | "error";
+  data?: string;
+  error?: string;
+  tokens?: number;
+  mimeType?: string;
+  name?: string;
+}
+
+interface WorkersAiBinding {
+  run(model: string, input: Record<string, unknown>): Promise<unknown>;
+  toMarkdown(input: { name: string; blob: Blob }): Promise<MarkdownConversionResult | MarkdownConversionResult[]>;
+}
+
+const decodeImageDataUrl = (dataUrl: string): number[] => {
+  const encoded = dataUrl.slice(dataUrl.indexOf(",") + 1);
+  const decoded = atob(encoded);
+  return Array.from(decoded, (character) => character.charCodeAt(0));
+};
+
+const handleAttachmentConversion = async (request: Request, env: Env): Promise<Response> => {
+  if (!isSameOrigin(request)) {
+    return apiError("Cross-origin file conversion is not allowed.", 403, "origin_rejected");
   }
 
-  let totalCharacters = 0;
-  const parsed: ApiMessage[] = [];
-  for (const message of messages) {
-    if (!message || typeof message !== "object") return null;
-    const { role, content } = message as Record<string, unknown>;
-    if (!(["system", "user", "assistant"] as unknown[]).includes(role)) return null;
-    if (typeof content !== "string" || !content.trim() || content.length > 32_000) return null;
-    totalCharacters += content.length;
-    if (totalCharacters > MAX_TOTAL_CHARACTERS) return null;
-    parsed.push({ role: role as ApiMessage["role"], content });
+  const rateLimit = await env.CHAT_RATE_LIMITER.limit({ key: getRateKey(request, "convert") });
+  if (!rateLimit.success) {
+    return apiError("Too many file conversions. Please wait a minute and try again.", 429, "rate_limited");
   }
-  return parsed;
+
+  let upload: File;
+  try {
+    const formData = await request.formData();
+    const entry = formData.get("file");
+    if (!(entry instanceof File)) return apiError("A file is required.", 400, "invalid_attachment");
+    upload = entry;
+  } catch {
+    return apiError("The upload must be multipart form data.", 400, "invalid_attachment");
+  }
+
+  const safeName = upload.name.replace(/[\r\n]/g, " ").trim().slice(0, 180);
+  const extension = safeName.split(".").at(-1)?.toLowerCase() ?? "";
+  if (!safeName || !convertibleExtensions.has(extension)) {
+    return apiError("This file format is not supported.", 400, "unsupported_file");
+  }
+  if (upload.size <= 0 || upload.size > MAX_CONVERT_FILE_BYTES) {
+    return apiError("The file is too large.", 413, "file_too_large");
+  }
+
+  try {
+    const result = await (env.AI as WorkersAiBinding).toMarkdown({ name: safeName, blob: upload });
+    const converted = Array.isArray(result) ? result[0] : result;
+    if (!converted || converted.format === "error" || typeof converted.data !== "string") {
+      console.error("Workers AI document conversion failed", { error: converted?.error ?? "No conversion result" });
+      return apiError("The file could not be converted.", 422, "conversion_failed");
+    }
+    const truncated = converted.data.length > MAX_CONVERTED_CHARACTERS;
+    return json({
+      name: safeName,
+      mimeType: converted.mimeType || upload.type || "application/octet-stream",
+      size: upload.size,
+      text: converted.data.slice(0, MAX_CONVERTED_CHARACTERS),
+      tokens: converted.tokens,
+      truncated,
+    });
+  } catch (error) {
+    console.error("Workers AI document conversion failed", {
+      message: error instanceof Error ? error.message : "Unknown conversion error",
+    });
+    return apiError("The file could not be converted.", 502, "conversion_failed");
+  }
 };
 
 const handleChat = async (request: Request, env: Env): Promise<Response> => {
@@ -72,10 +144,7 @@ const handleChat = async (request: Request, env: Env): Promise<Response> => {
     return apiError("Cross-origin AI requests are not allowed.", 403, "origin_rejected");
   }
 
-  const clientId = request.headers.get("x-neurondeck-client") ?? "anonymous";
-  const ip = request.headers.get("cf-connecting-ip") ?? "local";
-  const rateKey = `${ip}:${/^[a-zA-Z0-9_-]{8,64}$/.test(clientId) ? clientId : "invalid"}`;
-  const rateLimit = await env.CHAT_RATE_LIMITER.limit({ key: rateKey });
+  const rateLimit = await env.CHAT_RATE_LIMITER.limit({ key: getRateKey(request, "chat") });
   if (!rateLimit.success) {
     return apiError("Too many generations. Please wait a minute and try again.", 429, "rate_limited");
   }
@@ -91,10 +160,22 @@ const handleChat = async (request: Request, env: Env): Promise<Response> => {
     return apiError("Select a supported Cloudflare-hosted chat model.", 400, "invalid_model");
   }
 
-  const messages = parseMessages(body.messages);
-  if (!messages) {
-    return apiError("The conversation is empty, too large, or contains invalid messages.", 400, "invalid_messages");
+  const legacyVision = body.model === LEGACY_VISION_MODEL;
+  const parsedMessages = parseApiMessages(body.messages, {
+    supportsVision: visionModelIds.has(body.model),
+    maxImages: legacyVision ? 1 : 4,
+  });
+  if (!parsedMessages.ok) {
+    return apiError(
+      convertedFileErrorMessage[parsedMessages.code] ?? "The conversation contains invalid attachments.",
+      400,
+      parsedMessages.code,
+    );
   }
+  const builtInput = buildAiMessages(parsedMessages.messages, legacyVision);
+  const modelInput = legacyVision && builtInput.image
+    ? { messages: builtInput.messages, image: decodeImageDataUrl(builtInput.image) }
+    : builtInput;
 
   const temperature =
     typeof body.temperature === "number" && Number.isFinite(body.temperature)
@@ -106,11 +187,9 @@ const handleChat = async (request: Request, env: Env): Promise<Response> => {
       : 2048;
 
   try {
-    const ai = env.AI as {
-      run(model: string, input: Record<string, unknown>): Promise<unknown>;
-    };
+    const ai = env.AI as WorkersAiBinding;
     const result = await ai.run(body.model, {
-      messages,
+      ...modelInput,
       temperature,
       max_tokens: maxTokens,
       stream: true,
@@ -183,6 +262,10 @@ export default {
 
     if (request.method === "POST" && url.pathname === "/api/chat") {
       return handleChat(request, env);
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/attachments/convert") {
+      return handleAttachmentConversion(request, env);
     }
 
     if (url.pathname.startsWith("/api/")) {

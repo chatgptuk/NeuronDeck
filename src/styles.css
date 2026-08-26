@@ -786,6 +786,134 @@ input:focus-visible {
 .typing span:nth-child(2) { animation-delay: 120ms; }
 .typing span:nth-child(3) { animation-delay: 240ms; }
 
+.attachment-strip {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+
+.attachment-card {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 11px;
+  background: var(--panel-soft);
+  overflow: hidden;
+}
+
+.attachment-card.file {
+  width: min(250px, 100%);
+  min-height: 60px;
+  gap: 10px;
+  padding: 9px 34px 9px 10px;
+}
+
+.attachment-card.image {
+  width: 164px;
+  height: 108px;
+  align-items: flex-end;
+  background: #11171a;
+}
+
+.attachment-card.image::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 54%;
+  background: linear-gradient(transparent, rgba(4, 8, 10, 0.82));
+  content: "";
+  pointer-events: none;
+}
+
+.attachment-card.image img {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  inset: 0;
+}
+
+.attachment-file-icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  place-items: center;
+  border-radius: 9px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.attachment-meta {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  line-height: 1.25;
+}
+
+.attachment-card.image .attachment-meta {
+  width: 100%;
+  padding: 9px 10px;
+  color: #fff;
+}
+
+.attachment-meta strong {
+  display: block;
+  overflow: hidden;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-meta span {
+  color: var(--muted);
+  font-family: "DM Mono", monospace;
+  font-size: 8px;
+}
+
+.attachment-card.image .attachment-meta span { color: rgba(255, 255, 255, 0.72); }
+
+.attachment-remove {
+  position: absolute;
+  z-index: 2;
+  top: 5px;
+  right: 5px;
+  display: grid;
+  width: 23px;
+  height: 23px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--panel-raised) 90%, transparent);
+  color: var(--muted-strong);
+}
+
+.attachment-card.image .attachment-remove {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(7, 12, 14, 0.68);
+  color: #fff;
+}
+
+.attachment-strip.pending {
+  max-height: 128px;
+  margin: 0 0 9px;
+  overflow-y: auto;
+}
+
+.attachment-strip.pending .attachment-card.image {
+  width: 138px;
+  height: 86px;
+}
+
 @keyframes pulse {
   0%, 70%, 100% { opacity: 0.25; transform: translateY(0); }
   35% { opacity: 1; transform: translateY(-3px); }
@@ -845,8 +973,31 @@ input:focus-visible {
   align-items: center;
 }
 
+.composer-tools {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.attach-button {
+  display: grid;
+  width: 29px;
+  height: 29px;
+  flex: 0 0 29px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  color: var(--muted-strong);
+}
+
+.attach-button:hover { color: var(--text); }
+.attach-button:disabled { cursor: default; opacity: 0.4; }
+
 .composer-badges {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 7px;
 }
@@ -863,6 +1014,13 @@ input:focus-visible {
   color: var(--muted-strong);
   font-family: "DM Mono", monospace;
   font-size: 8px;
+}
+
+.composer-badges button {
+  max-width: 230px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .composer-badges button:hover { color: var(--text); }
@@ -898,6 +1056,23 @@ input:focus-visible {
   font-size: 8px;
   letter-spacing: 0.02em;
   text-align: center;
+}
+
+.attachment-status,
+.attachment-error {
+  margin: 7px 3px 0;
+  font-size: 9px;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.attachment-status { color: var(--muted); }
+.attachment-error { color: var(--danger); }
+
+.spinning { animation: spin 0.8s linear infinite; }
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 .inspector {
@@ -1324,6 +1499,8 @@ input:focus-visible {
   .welcome-orbit { width: 58px; height: 58px; }
   .starter-grid button:nth-child(n + 3) { display: none; }
   .composer-badges > span { display: none; }
+  .composer-badges button { max-width: 150px; }
+  .attachment-card.file { width: 100%; }
   .picker-header { padding: 18px 16px 13px; }
   .model-search { margin: 0 16px; }
   .filter-row { padding-right: 16px; padding-left: 16px; }

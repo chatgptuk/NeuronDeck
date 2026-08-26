@@ -11,5 +11,5 @@
     "noEmit": true,
     "types": ["@cloudflare/workers-types"]
   },
-  "include": ["worker", "src/data/models.generated.json"]
+  "include": ["worker", "src/data/models.generated.json", "src/lib/chat-input.ts", "src/types.ts"]
 }

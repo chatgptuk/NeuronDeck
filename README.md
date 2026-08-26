@@ -11,6 +11,8 @@ Production: [ai.chatgpt.org.uk](https://ai.chatgpt.org.uk)
 - Chinese and English interface with localized model descriptions and a one-click language switch
 - Light appearance by default, with a persistent optional dark theme
 - Streaming generation with stop, regenerate, copy, and edit-from-here actions
+- Image input for every catalog model marked as vision-capable, with previews in the composer and message history
+- Text, Markdown, code, PDF, Word, spreadsheet, HTML, XML, OpenDocument, and Numbers attachments; rich documents are converted through Workers AI before inference
 - Per-conversation system prompt, temperature, and maximum output tokens
 - Markdown, GitHub-flavored tables, syntax highlighting, and code copying
 - Browser-local conversation history stored in IndexedDB
@@ -75,11 +77,12 @@ The Worker configuration binds the custom domain `ai.chatgpt.org.uk`, disables t
 Browser
 ├── React + Vite UI
 ├── IndexedDB conversations
-└── /api/models + /api/chat
+└── /api/models + /api/chat + /api/attachments/convert
           │
           ▼
 Cloudflare Worker
 ├── model allowlist + validation
+├── vision request adapters + document conversion
 ├── Rate Limiting binding
 ├── Workers AI binding
 └── Workers Static Assets

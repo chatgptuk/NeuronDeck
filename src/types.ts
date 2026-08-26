@@ -19,6 +19,18 @@ export interface ModelInfo {
 
 export type MessageRole = "user" | "assistant";
 
+export interface Attachment {
+  id: string;
+  kind: "image" | "file";
+  name: string;
+  mimeType: string;
+  size: number;
+  dataUrl?: string;
+  text?: string;
+  tokens?: number;
+  truncated?: boolean;
+}
+
 export interface ChatMessage {
   id: string;
   role: MessageRole;
@@ -28,6 +40,7 @@ export interface ChatMessage {
   modelId?: string;
   status?: "streaming" | "complete" | "error";
   elapsedMs?: number;
+  attachments?: Attachment[];
 }
 
 export interface Conversation {

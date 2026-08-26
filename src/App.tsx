@@ -5,10 +5,12 @@ import {
   Copy,
   Download,
   Languages,
+  LoaderCircle,
   Menu,
   MessageSquareText,
   Moon,
   PanelRight,
+  Paperclip,
   Pencil,
   Plus,
   RefreshCw,
@@ -36,9 +38,18 @@ import {
   formatPrice,
   getModel,
 } from "./lib/models";
+import {
+  ATTACHMENT_ACCEPT,
+  MAX_ATTACHMENTS_PER_MESSAGE,
+  MAX_DOCUMENT_BYTES,
+  MAX_IMAGE_BYTES,
+  classifyFile,
+  createLocalAttachment,
+} from "./lib/attachments";
 import { consumeChatStream } from "./lib/stream";
 import { loadWorkspace, saveWorkspace } from "./lib/storage";
-import type { ChatMessage, Conversation, ModelInfo, WorkspaceState } from "./types";
+import type { Attachment, ChatMessage, Conversation, ModelInfo, WorkspaceState } from "./types";
+import { AttachmentStrip } from "./components/AttachmentStrip";
 
 const MarkdownMessage = lazy(() =>
   import("./components/MarkdownMessage").then((module) => ({ default: module.MarkdownMessage })),
@@ -49,6 +60,34 @@ const ModelPicker = lazy(() =>
 
 const id = (): string => crypto.randomUUID();
 const now = (): string => new Date().toISOString();
+const LEGACY_VISION_MODEL_ID = "@cf/meta/llama-3.2-11b-vision-instruct";
+const MAX_CONTEXT_ATTACHMENTS = 8;
+
+const pruneAttachmentsForRequest = (messages: ChatMessage[], modelId: string): ChatMessage[] => {
+  let attachmentSlots = MAX_CONTEXT_ATTACHMENTS;
+  let imageSlots = modelId === LEGACY_VISION_MODEL_ID ? 1 : MAX_ATTACHMENTS_PER_MESSAGE;
+
+  return [...messages]
+    .reverse()
+    .map((message) => {
+      if (!message.attachments?.length || attachmentSlots <= 0) {
+        return { ...message, attachments: undefined };
+      }
+
+      const attachments: Attachment[] = [];
+      for (const attachment of [...message.attachments].reverse()) {
+        if (attachmentSlots <= 0) break;
+        if (attachment.kind === "image") {
+          if (imageSlots <= 0) continue;
+          imageSlots -= 1;
+        }
+        attachments.unshift(attachment);
+        attachmentSlots -= 1;
+      }
+      return { ...message, attachments: attachments.length ? attachments : undefined };
+    })
+    .reverse();
+};
 
 const createConversation = (language: Language, modelId = DEFAULT_MODEL_ID): Conversation => {
   const timestamp = now();
@@ -99,6 +138,9 @@ function App() {
   const [catalogSyncedAt, setCatalogSyncedAt] = useState(CATALOG_SYNCED_AT);
   const [hydrated, setHydrated] = useState(false);
   const [composer, setComposer] = useState("");
+  const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
+  const [attachmentBusy, setAttachmentBusy] = useState(false);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -109,12 +151,16 @@ function App() {
   );
   const abortRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const messageEndRef = useRef<HTMLDivElement | null>(null);
 
   const activeConversation =
     workspace.conversations.find((conversation) => conversation.id === workspace.activeConversationId) ??
     workspace.conversations[0];
   const activeModel = getModel(models, activeConversation.modelId);
+  const activeModelSupportsVision = activeModel.capabilities.includes("vision");
+  const hasIncompatibleImages =
+    !activeModelSupportsVision && pendingAttachments.some((attachment) => attachment.kind === "image");
 
   useEffect(() => {
     let active = true;
@@ -239,11 +285,16 @@ function App() {
       let content = "";
       let reasoning = "";
 
+      const requestMessages = pruneAttachmentsForRequest(contextMessages, conversation.modelId);
       const apiMessages = [
         ...(conversation.systemPrompt.trim()
           ? [{ role: "system" as const, content: conversation.systemPrompt.trim() }]
           : []),
-        ...contextMessages.map((message) => ({ role: message.role, content: message.content })),
+        ...requestMessages.map((message) => ({
+          role: message.role,
+          content: message.content,
+          ...(message.attachments?.length ? { attachments: message.attachments } : {}),
+        })),
       ];
 
       try {
@@ -318,8 +369,8 @@ function App() {
   );
 
   const sendMessage = useCallback(async () => {
-    const prompt = composer.trim();
-    if (!prompt || generating) return;
+    const prompt = composer.trim() || (pendingAttachments.length ? t.attachmentDefaultPrompt : "");
+    if (!prompt || generating || attachmentBusy || hasIncompatibleImages) return;
 
     const timestamp = now();
     const userMessage: ChatMessage = {
@@ -328,6 +379,7 @@ function App() {
       content: prompt,
       createdAt: timestamp,
       status: "complete",
+      ...(pendingAttachments.length ? { attachments: pendingAttachments } : {}),
     };
     const assistantMessage: ChatMessage = {
       id: id(),
@@ -347,8 +399,20 @@ function App() {
       messages: [...contextMessages, assistantMessage],
     }));
     setComposer("");
+    setPendingAttachments([]);
+    setAttachmentError(null);
     await generateResponse(snapshot, contextMessages, assistantMessage.id);
-  }, [activeConversation, composer, generateResponse, generating, updateConversation]);
+  }, [
+    activeConversation,
+    attachmentBusy,
+    composer,
+    generateResponse,
+    generating,
+    hasIncompatibleImages,
+    pendingAttachments,
+    t.attachmentDefaultPrompt,
+    updateConversation,
+  ]);
 
   const regenerate = useCallback(
     (messageId: string) => {
@@ -381,6 +445,8 @@ function App() {
     const message = activeConversation.messages[index];
     if (!message || message.role !== "user") return;
     setComposer(message.content);
+    setPendingAttachments(message.attachments ?? []);
+    setAttachmentError(null);
     updateConversation(activeConversation.id, (conversation) => ({
       ...conversation,
       messages: conversation.messages.slice(0, index),
@@ -395,6 +461,110 @@ function App() {
     window.setTimeout(() => setCopiedMessageId(null), 1400);
   };
 
+  const handleFileSelection = async (files: FileList | null) => {
+    if (!files?.length || attachmentBusy || generating) return;
+    setAttachmentBusy(true);
+    setAttachmentError(null);
+
+    const availableSlots = Math.max(0, MAX_ATTACHMENTS_PER_MESSAGE - pendingAttachments.length);
+    const selected = Array.from(files).slice(0, availableSlots);
+    if (files.length > availableSlots) setAttachmentError(t.tooManyAttachments);
+    const prepared: Attachment[] = [];
+    let imageCount = pendingAttachments.filter((attachment) => attachment.kind === "image").length;
+    const imageLimit = activeModel.id === LEGACY_VISION_MODEL_ID ? 1 : MAX_ATTACHMENTS_PER_MESSAGE;
+
+    try {
+      for (const file of selected) {
+        const classification = classifyFile(file);
+        if (classification === "unsupported") {
+          setAttachmentError(t.unsupportedAttachment);
+          continue;
+        }
+        if (classification === "image") {
+          if (!activeModelSupportsVision) {
+            setAttachmentError(t.imageNeedsVision);
+            continue;
+          }
+          if (imageCount >= imageLimit) {
+            setAttachmentError(t.tooManyImages);
+            continue;
+          }
+          if (file.size > MAX_IMAGE_BYTES) {
+            setAttachmentError(t.imageTooLarge);
+            continue;
+          }
+          const attachment = await createLocalAttachment(file);
+          if (attachment) {
+            prepared.push(attachment);
+            imageCount += 1;
+          }
+          continue;
+        }
+
+        if (file.size > MAX_DOCUMENT_BYTES) {
+          setAttachmentError(t.documentTooLarge);
+          continue;
+        }
+        if (classification === "text") {
+          const attachment = await createLocalAttachment(file);
+          if (attachment) prepared.push(attachment);
+          continue;
+        }
+
+        const formData = new FormData();
+        formData.set("file", file);
+        const response = await fetch("/api/attachments/convert", {
+          method: "POST",
+          headers: {
+            "x-neurondeck-client": getClientId(),
+            "accept-language": language === "zh" ? "zh-CN" : "en",
+          },
+          body: formData,
+        });
+        const data = (await response.json().catch(() => null)) as
+          | {
+              name?: string;
+              mimeType?: string;
+              size?: number;
+              text?: string;
+              tokens?: number;
+              truncated?: boolean;
+              error?: { code?: string; message?: string };
+            }
+          | null;
+        if (!response.ok || !data?.text) {
+          throw new Error(
+            getLocalizedError(language, data?.error?.code, data?.error?.message || t.conversionFailed),
+          );
+        }
+        prepared.push({
+          id: id(),
+          kind: "file",
+          name: data.name || file.name,
+          mimeType: data.mimeType || file.type || "application/octet-stream",
+          size: data.size ?? file.size,
+          text: data.text,
+          tokens: data.tokens,
+          truncated: data.truncated,
+        });
+      }
+
+      if (prepared.length) {
+        setPendingAttachments((current) => [...current, ...prepared].slice(0, MAX_ATTACHMENTS_PER_MESSAGE));
+      }
+    } catch (error) {
+      setAttachmentError(error instanceof Error ? error.message : t.attachmentReadFailed);
+    } finally {
+      setAttachmentBusy(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const removePendingAttachment = (attachmentId: string) => {
+    setPendingAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId));
+    setAttachmentError(null);
+  };
+
   const newConversation = () => {
     const conversation = createConversation(language, activeConversation.modelId);
     setWorkspace((current) => ({
@@ -404,6 +574,8 @@ function App() {
     }));
     setSidebarOpen(false);
     setComposer("");
+    setPendingAttachments([]);
+    setAttachmentError(null);
   };
 
   const deleteConversation = (conversationId: string) => {
@@ -437,6 +609,9 @@ function App() {
       ...activeConversation.messages.flatMap((message) => [
         `## ${message.role === "user" ? t.exportYou : activeModel.name}`,
         "",
+        ...(message.attachments?.length
+          ? [`${t.attachmentList}: ${message.attachments.map((attachment) => attachment.name).join(", ")}`, ""]
+          : []),
         message.content,
         "",
       ]),
@@ -451,6 +626,13 @@ function App() {
 
   const selectModel = (modelId: string) => {
     updateConversation(activeConversation.id, (conversation) => ({ ...conversation, modelId, updatedAt: now() }));
+    const selectedModel = getModel(models, modelId);
+    setAttachmentError(
+      pendingAttachments.some((attachment) => attachment.kind === "image") &&
+        !selectedModel.capabilities.includes("vision")
+        ? t.imageNeedsVision
+        : null,
+    );
     setModelPickerOpen(false);
   };
 
@@ -503,6 +685,9 @@ function App() {
               onClick={() => {
                 setWorkspace((current) => ({ ...current, activeConversationId: conversation.id }));
                 setSidebarOpen(false);
+                setComposer("");
+                setPendingAttachments([]);
+                setAttachmentError(null);
               }}
             >
               <span className="conversation-title">{conversationTitle(conversation.title)}</span>
@@ -611,6 +796,9 @@ function App() {
                         </div>
                       </div>
                       <div className={message.status === "error" ? "message-content error" : "message-content"}>
+                        {message.attachments?.length ? (
+                          <AttachmentStrip attachments={message.attachments} language={language} />
+                        ) : null}
                         {message.reasoning && (
                           <details className="reasoning-block">
                             <summary>{t.reasoningTrace}</summary>
@@ -645,6 +833,22 @@ function App() {
 
             <div className="composer-wrap">
               <div className="composer">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept={ATTACHMENT_ACCEPT}
+                  multiple
+                  hidden
+                  onChange={(event) => void handleFileSelection(event.target.files)}
+                />
+                {pendingAttachments.length ? (
+                  <AttachmentStrip
+                    attachments={pendingAttachments}
+                    language={language}
+                    onRemove={removePendingAttachment}
+                    pending
+                  />
+                ) : null}
                 <textarea
                   ref={textareaRef}
                   rows={1}
@@ -661,17 +865,41 @@ function App() {
                   disabled={generating}
                 />
                 <div className="composer-bottom">
-                  <div className="composer-badges">
-                    <button onClick={() => setModelPickerOpen(true)} type="button"><span className="model-dot" />{activeModel.name}</button>
-                    <span>{formatContextWindow(activeModel.contextWindow, language)}</span>
+                  <div className="composer-tools">
+                    <button
+                      className="attach-button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={generating || attachmentBusy || pendingAttachments.length >= MAX_ATTACHMENTS_PER_MESSAGE}
+                      type="button"
+                      aria-label={t.attachFiles}
+                      title={t.attachFiles}
+                    >
+                      {attachmentBusy ? <LoaderCircle className="spinning" size={17} /> : <Paperclip size={17} />}
+                    </button>
+                    <div className="composer-badges">
+                      <button onClick={() => setModelPickerOpen(true)} type="button"><span className="model-dot" />{activeModel.name}</button>
+                      <span>{formatContextWindow(activeModel.contextWindow, language)}</span>
+                    </div>
                   </div>
                   {generating ? (
                     <button className="send-button stop" onClick={() => abortRef.current?.abort()} type="button" aria-label={t.stopGenerating}><Square size={15} fill="currentColor" /></button>
                   ) : (
-                    <button className="send-button" onClick={() => void sendMessage()} disabled={!composer.trim()} type="button" aria-label={t.sendMessage}><Send size={17} /></button>
+                    <button
+                      className="send-button"
+                      onClick={() => void sendMessage()}
+                      disabled={
+                        (!composer.trim() && !pendingAttachments.length) || attachmentBusy || hasIncompatibleImages
+                      }
+                      type="button"
+                      aria-label={t.sendMessage}
+                    ><Send size={17} /></button>
                   )}
                 </div>
               </div>
+              {attachmentBusy ? <p className="attachment-status">{t.processingAttachment}</p> : null}
+              {attachmentError || hasIncompatibleImages ? (
+                <p className="attachment-error" role="alert">{attachmentError || t.imageNeedsVision}</p>
+              ) : null}
               <p className="composer-note">{t.modelCaution}</p>
             </div>
           </section>
