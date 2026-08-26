@@ -2,10 +2,12 @@ import {
   Archive,
   Check,
   ChevronDown,
+  Cloud,
   Copy,
   Download,
   Languages,
   LoaderCircle,
+  LogOut,
   Menu,
   MessageSquareText,
   MoreHorizontal,
@@ -66,6 +68,12 @@ import {
   IMAGE_MODELS,
   isImageModelId,
 } from "./lib/image-models";
+import {
+  disconnectCloudflare,
+  getCloudflareAuthStatus,
+  selectCloudflareAccount,
+  type CloudflareAuthStatus,
+} from "./lib/cloudflare-auth";
 import type { Attachment, ChatMessage, Conversation, GeneratedImage, ModelInfo, WorkspaceState } from "./types";
 import { AttachmentStrip } from "./components/AttachmentStrip";
 import { GeneratedImageGallery } from "./components/GeneratedImageGallery";
@@ -203,6 +211,13 @@ function App() {
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [cloudflareAuth, setCloudflareAuth] = useState<CloudflareAuthStatus>({
+    configured: false,
+    authenticated: false,
+    accounts: [],
+  });
+  const [cloudflareAuthBusy, setCloudflareAuthBusy] = useState(true);
+  const [cloudflareAuthError, setCloudflareAuthError] = useState<string | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [revealedTimeMessageId, setRevealedTimeMessageId] = useState<string | null>(null);
   const [theme, setTheme] = useState<"dark" | "light">(
@@ -225,6 +240,33 @@ function App() {
   const attachmentTarget = `${activeConversation.id}:${activeModel.id}`;
   const attachmentTargetRef = useRef(attachmentTarget);
   attachmentTargetRef.current = attachmentTarget;
+
+  useEffect(() => {
+    let active = true;
+    const callbackStatus = new URL(window.location.href).searchParams.get("cloudflare");
+    if (callbackStatus) {
+      const cleanUrl = new URL(window.location.href);
+      cleanUrl.searchParams.delete("cloudflare");
+      window.history.replaceState({}, "", `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`);
+    }
+    void getCloudflareAuthStatus()
+      .then((status) => {
+        if (!active) return;
+        setCloudflareAuth(status);
+        setCloudflareAuthError(callbackStatus === "error" || callbackStatus === "denied"
+          ? t.cloudflareAuthFailed
+          : status.error ?? null);
+      })
+      .catch((error) => {
+        if (active) setCloudflareAuthError(error instanceof Error ? error.message : t.cloudflareAuthFailed);
+      })
+      .finally(() => {
+        if (active) setCloudflareAuthBusy(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [t.cloudflareAuthFailed]);
 
   useEffect(() => {
     if (!revealedTimeMessageId) return;
@@ -329,6 +371,37 @@ function App() {
         // The committed catalog keeps local development and transient outages usable.
       });
   }, [t.modelCatalogUnavailable]);
+
+  const connectCloudflare = () => {
+    setCloudflareAuthBusy(true);
+    window.location.assign("/api/auth/cloudflare/start");
+  };
+
+  const changeCloudflareAccount = async (accountId: string) => {
+    setCloudflareAuthBusy(true);
+    setCloudflareAuthError(null);
+    try {
+      await selectCloudflareAccount(accountId);
+      setCloudflareAuth(await getCloudflareAuthStatus());
+    } catch (error) {
+      setCloudflareAuthError(error instanceof Error ? error.message : t.cloudflareAuthFailed);
+    } finally {
+      setCloudflareAuthBusy(false);
+    }
+  };
+
+  const logoutCloudflare = async () => {
+    setCloudflareAuthBusy(true);
+    setCloudflareAuthError(null);
+    try {
+      await disconnectCloudflare();
+      setCloudflareAuth(await getCloudflareAuthStatus());
+    } catch (error) {
+      setCloudflareAuthError(error instanceof Error ? error.message : t.cloudflareAuthFailed);
+    } finally {
+      setCloudflareAuthBusy(false);
+    }
+  };
 
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
@@ -972,6 +1045,16 @@ function App() {
           </button>
           <div className="topbar-actions">
             <button
+              className={cloudflareAuth.authenticated ? "cloud-account-button connected" : "cloud-account-button"}
+              onClick={() => setInspectorOpen(true)}
+              aria-label={t.cloudflareAccount}
+              title={cloudflareAuth.authenticated ? cloudflareAuth.activeAccountName : t.cloudflareSiteQuota}
+              type="button"
+            >
+              <Cloud size={17} />
+              <span>{cloudflareAuth.authenticated ? cloudflareAuth.activeAccountName : t.cloudflareSiteQuota}</span>
+            </button>
+            <button
               className="language-toggle"
               onClick={() => setLanguage((current) => (current === "zh" ? "en" : "zh"))}
               aria-label={t.switchLanguage}
@@ -1206,6 +1289,47 @@ function App() {
               <div><span>{t.context}</span><strong>{formatContextWindow(activeModel.contextWindow, language).replace(language === "zh" ? " 上下文" : " context", "")}</strong></div>
               <div><span>{t.inputPerMillion}</span><strong>{formatPrice(activeModel.prices.input)}</strong></div>
               <div><span>{t.outputPerMillion}</span><strong>{formatPrice(activeModel.prices.output)}</strong></div>
+            </div>
+            <div className="inspector-section cloudflare-account-section">
+              <span className="section-title"><Cloud size={15} />{t.cloudflareAccount}</span>
+              <div className={cloudflareAuth.authenticated ? "cloudflare-account-card connected" : "cloudflare-account-card"}>
+                <div className="cloudflare-account-heading">
+                  <span className="cloudflare-mark"><Cloud size={18} /></span>
+                  <div>
+                    <strong>{cloudflareAuth.authenticated ? cloudflareAuth.activeAccountName : t.cloudflareSiteQuota}</strong>
+                    <span>{cloudflareAuth.authenticated ? t.cloudflareConnected : t.cloudflareAccountDescription}</span>
+                  </div>
+                </div>
+                {cloudflareAuth.authenticated ? (
+                  <>
+                    {cloudflareAuth.accounts.length > 1 ? (
+                      <label className="cloudflare-account-select">
+                        <span>{t.cloudflareSelectAccount}</span>
+                        <select
+                          value={cloudflareAuth.activeAccountId}
+                          disabled={cloudflareAuthBusy}
+                          onChange={(event) => void changeCloudflareAccount(event.target.value)}
+                        >
+                          {cloudflareAuth.accounts.map((account) => (
+                            <option key={account.id} value={account.id}>{account.name}</option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
+                    <button className="cloudflare-disconnect" type="button" disabled={cloudflareAuthBusy} onClick={() => void logoutCloudflare()}>
+                      {cloudflareAuthBusy ? <LoaderCircle className="spinning" size={14} /> : <LogOut size={14} />}
+                      {t.cloudflareDisconnect}
+                    </button>
+                  </>
+                ) : (
+                  <button className="cloudflare-connect" type="button" disabled={cloudflareAuthBusy || !cloudflareAuth.configured} onClick={connectCloudflare}>
+                    {cloudflareAuthBusy ? <LoaderCircle className="spinning" size={15} /> : <Cloud size={15} />}
+                    {cloudflareAuthBusy ? t.cloudflareConnecting : cloudflareAuth.configured ? t.cloudflareConnect : t.cloudflareUnavailable}
+                  </button>
+                )}
+              </div>
+              {cloudflareAuthError ? <p className="cloudflare-auth-error" role="alert">{cloudflareAuthError}</p> : null}
+              <p className="cloudflare-auth-privacy">{t.cloudflareAccountPrivacy}</p>
             </div>
             <div className="inspector-section">
               <label htmlFor="system-prompt"><Settings2 size={14} />{t.systemPrompt}</label>

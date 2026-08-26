@@ -237,6 +237,11 @@ input:focus-visible {
 .active-model-mark img { display: block; width: 100%; height: 100%; object-fit: contain; padding: 3px; }
 .active-model-mark svg { width: 14px; height: 14px; color: var(--accent-bright); }
 .topbar-actions { display: flex; align-items: center; gap: 3px; margin-left: auto; }
+.cloud-account-button { display: inline-flex; max-width: 220px; height: 38px; align-items: center; gap: 7px; border: 1px solid transparent; border-radius: 11px; background: transparent; padding: 0 10px; color: var(--muted-strong); font-size: 10px; font-weight: 600; transition: border-color 150ms ease, background 150ms ease, color 150ms ease; }
+.cloud-account-button svg { flex: 0 0 auto; color: #d66b18; stroke-width: 1.8; }
+.cloud-account-button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cloud-account-button:hover { border-color: color-mix(in srgb, #f48120 20%, var(--line)); background: color-mix(in srgb, #f48120 5%, var(--panel-soft)); color: var(--text); }
+.cloud-account-button.connected { border-color: color-mix(in srgb, #f48120 16%, var(--line)); background: color-mix(in srgb, #f48120 6%, var(--panel-raised)); color: var(--text); }
 .language-toggle { display: inline-flex; height: 38px; align-items: center; gap: 6px; border: 1px solid transparent; border-radius: 11px; background: transparent; padding: 0 10px; color: var(--muted-strong); font-size: 11px; font-weight: 600; }
 .language-toggle:hover { border-color: var(--line); background: var(--panel-soft); color: var(--text); }
 
@@ -452,6 +457,28 @@ input:focus-visible {
 .inspector-stats span { color: var(--muted); font-size: 9px; }
 .inspector-stats strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; }
 .inspector-section { min-width: 294px; margin-top: 23px; }
+.cloudflare-account-section { margin-top: 5px; border-top: 1px solid var(--line); padding-top: 22px; }
+.cloudflare-account-card { border: 1px solid var(--line); border-radius: 17px; background: linear-gradient(145deg, color-mix(in srgb, #f48120 4%, var(--panel-raised)), var(--panel-raised)); padding: 13px; }
+.cloudflare-account-card.connected { border-color: color-mix(in srgb, #f48120 18%, var(--line)); }
+.cloudflare-account-heading { display: flex; min-width: 0; align-items: center; gap: 11px; }
+.cloudflare-mark { display: grid; width: 38px; height: 38px; flex: 0 0 38px; place-items: center; border: 1px solid color-mix(in srgb, #f48120 18%, var(--line)); border-radius: 13px 16px 13px 16px; background: color-mix(in srgb, #f48120 9%, var(--panel-raised)); color: #d66b18; }
+.cloudflare-mark svg { stroke-width: 1.75; }
+.cloudflare-account-heading > div { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 3px; }
+.cloudflare-account-heading strong { overflow: hidden; font-size: 11px; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
+.cloudflare-account-heading div span { color: var(--muted); font-size: 8px; line-height: 1.45; }
+.cloudflare-connect,
+.cloudflare-disconnect { display: flex; width: 100%; min-height: 36px; align-items: center; justify-content: center; gap: 7px; margin-top: 12px; border: 1px solid color-mix(in srgb, #f48120 24%, var(--line)); border-radius: 11px; background: color-mix(in srgb, #f48120 8%, var(--panel-soft)); color: color-mix(in srgb, #d66b18 82%, var(--text)); font-size: 9px; font-weight: 650; }
+.cloudflare-connect:hover:not(:disabled) { background: color-mix(in srgb, #f48120 13%, var(--panel-soft)); }
+.cloudflare-disconnect { border-color: var(--line); background: transparent; color: var(--muted-strong); }
+.cloudflare-disconnect:hover:not(:disabled) { background: var(--panel-soft); color: var(--text); }
+.cloudflare-connect:disabled,
+.cloudflare-disconnect:disabled { cursor: default; opacity: 0.52; }
+.cloudflare-account-select { display: flex !important; flex-direction: column; align-items: stretch !important; gap: 6px !important; margin: 13px 0 0 !important; }
+.cloudflare-account-select span { color: var(--muted); font-size: 8px; }
+.cloudflare-account-select select { width: 100%; min-height: 36px; border: 1px solid var(--line); border-radius: 10px; outline: 0; background: var(--panel-soft); padding: 0 10px; color: var(--text); font-size: 9px; }
+.cloudflare-auth-privacy,
+.cloudflare-auth-error { margin: 8px 2px 0; color: var(--muted); font-size: 8px; line-height: 1.5; }
+.cloudflare-auth-error { color: var(--danger); }
 .inspector-section label,
 .section-title { display: flex; align-items: center; gap: 6px; margin-bottom: 9px; color: var(--muted-strong); font-size: 10px; font-weight: 650; letter-spacing: 0.025em; }
 .section-title svg { width: 15px; height: 15px; }
@@ -560,6 +587,8 @@ input:focus-visible {
   .mobile-menu { display: inline-flex; }
   .mobile-scrim { position: fixed; z-index: 15; display: block; border: 0; background: rgba(37, 48, 42, 0.35); backdrop-filter: blur(4px); inset: 0; }
   .topbar { height: 64px; flex-basis: 64px; padding: 0 12px; }
+  .cloud-account-button { width: 38px; padding: 0; justify-content: center; }
+  .cloud-account-button span { display: none; }
   .mobile-menu { margin-right: 3px; }
   .model-trigger > span:nth-child(2) { max-width: 150px; overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
   .model-trigger small { font-size: 10px; }
@@ -617,6 +646,13 @@ input:focus-visible {
   .inspector-stats strong { font-size: 13px; }
   .inspector-section label,
   .section-title { font-size: 11px; }
+  .cloudflare-account-heading strong { font-size: 13px; }
+  .cloudflare-account-heading div span,
+  .cloudflare-auth-privacy,
+  .cloudflare-auth-error { font-size: 10px; }
+  .cloudflare-connect,
+  .cloudflare-disconnect,
+  .cloudflare-account-select select { font-size: 11px; }
   .range-label output { font-size: 12px; }
   .range-hints { font-size: 10px; }
   .number-hint { font-size: 10px; line-height: 1.55; }

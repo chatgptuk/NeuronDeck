@@ -1,4 +1,11 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
+import {
+  getOAuthSession,
+  getOAuthSessionById,
+  handleOAuthRoute,
+  type CloudflareOAuthEnv,
+  type OAuthSessionContext,
+} from "./cloudflare-oauth";
 import catalog from "../src/data/models.generated.json";
 import { buildAiMessages, parseApiMessages } from "../src/lib/chat-input";
 import {
@@ -14,7 +21,7 @@ interface RateLimiter {
   limit(options: { key: string }): Promise<{ success: boolean }>;
 }
 
-interface Env {
+interface Env extends CloudflareOAuthEnv {
   AI: unknown;
   ASSETS: Fetcher;
   CHAT_RATE_LIMITER: RateLimiter;
@@ -94,6 +101,87 @@ interface WorkersAiBinding {
   toMarkdown(input: { name: string; blob: Blob }): Promise<MarkdownConversionResult | MarkdownConversionResult[]>;
 }
 
+interface CloudflareApiEnvelope {
+  success?: boolean;
+  result?: unknown;
+  errors?: Array<{ message?: string }>;
+}
+
+const createCloudflareRestAi = (context: OAuthSessionContext): WorkersAiBinding => {
+  const request = async (path: string, init: RequestInit): Promise<Response> => {
+    const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${context.accountId}${path}`, {
+      ...init,
+      headers: {
+        authorization: `Bearer ${context.accessToken}`,
+        ...(init.headers ?? {}),
+      },
+    });
+    if (response.ok) return response;
+
+    const payload = await response.clone().json().catch(() => null) as CloudflareApiEnvelope | null;
+    const message = payload?.errors?.find((error) => error.message)?.message
+      || `Cloudflare API request failed with status ${response.status}.`;
+    throw new Error(message);
+  };
+
+  return {
+    async run(model, input) {
+      const multipart = input.multipart && typeof input.multipart === "object"
+        ? input.multipart as { body?: unknown; contentType?: unknown }
+        : null;
+      const response = await request(`/ai/run/${model}`, {
+        method: "POST",
+        headers: multipart && typeof multipart.contentType === "string"
+          ? { "content-type": multipart.contentType }
+          : { "content-type": "application/json", accept: "application/json, text/event-stream, image/*" },
+        body: multipart?.body instanceof ReadableStream
+          ? multipart.body
+          : JSON.stringify(input),
+      });
+      const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+      if (contentType.includes("text/event-stream")) {
+        if (!response.body) throw new Error("Cloudflare returned an empty AI stream.");
+        return response.body;
+      }
+      if (contentType.startsWith("image/") || contentType.includes("application/octet-stream")) {
+        return response;
+      }
+      const payload = await response.json() as CloudflareApiEnvelope;
+      if (payload.success === false) {
+        throw new Error(payload.errors?.find((error) => error.message)?.message || "Cloudflare AI request failed.");
+      }
+      return payload.result;
+    },
+    async toMarkdown({ name, blob }) {
+      const formData = new FormData();
+      formData.set("files", blob, name);
+      const response = await request("/ai/tomarkdown", { method: "POST", body: formData });
+      const payload = await response.json() as CloudflareApiEnvelope;
+      if (payload.success === false) {
+        throw new Error(payload.errors?.find((error) => error.message)?.message || "Cloudflare document conversion failed.");
+      }
+      return payload.result as MarkdownConversionResult | MarkdownConversionResult[];
+    },
+  };
+};
+
+type AiResolution =
+  | { ok: true; ai: WorkersAiBinding; oauthSessionId?: string }
+  | { ok: false; response: Response };
+
+const resolveAiForRequest = async (request: Request, env: Env): Promise<AiResolution> => {
+  const oauth = await getOAuthSession(request, env);
+  if (oauth.kind === "anonymous") return { ok: true, ai: env.AI as WorkersAiBinding };
+  if (oauth.kind === "invalid") {
+    return { ok: false, response: apiError(oauth.message, 401, "oauth_expired") };
+  }
+  return {
+    ok: true,
+    ai: createCloudflareRestAi(oauth.context),
+    oauthSessionId: oauth.context.sessionId,
+  };
+};
+
 type ImageAspectRatio = "square" | "landscape" | "portrait";
 
 interface GenerateImageArguments {
@@ -107,6 +195,7 @@ interface ImageWorkflowParams {
   clientId: string;
   jobId: string;
   modelId: string;
+  oauthSessionId?: string;
   prompt: string;
 }
 
@@ -340,13 +429,19 @@ export class ImageGenerationWorkflow extends WorkflowEntrypoint<Env, ImageWorkfl
         timeout: "15 minutes",
       },
       async () => {
-        const { accessToken, aspectRatio, clientId, jobId, modelId, prompt } = event.payload;
+        const { accessToken, aspectRatio, clientId, jobId, modelId, oauthSessionId, prompt } = event.payload;
         if (!isImageModelId(modelId)) throw new Error("Unsupported image model.");
         const model = getImageModel(modelId);
         const { width, height } = imageDimensions[aspectRatio];
         const seed = Math.floor(Math.random() * 2_147_483_647);
         const startedAt = performance.now();
-        const result = await (this.env.AI as WorkersAiBinding).run(
+        let ai = this.env.AI as WorkersAiBinding;
+        if (oauthSessionId) {
+          const oauth = await getOAuthSessionById(this.env, oauthSessionId);
+          if (!oauth) throw new Error("Cloudflare authorization expired while the image job was running.");
+          ai = createCloudflareRestAi(oauth);
+        }
+        const result = await ai.run(
           model.id,
           buildImageInput(model.id, prompt, width, height, seed),
         );
@@ -445,8 +540,11 @@ const handleAttachmentConversion = async (request: Request, env: Env): Promise<R
     return apiError("The file is too large.", 413, "file_too_large");
   }
 
+  const resolvedAi = await resolveAiForRequest(request, env);
+  if (!resolvedAi.ok) return resolvedAi.response;
+
   try {
-    const result = await (env.AI as WorkersAiBinding).toMarkdown({ name: safeName, blob: upload });
+    const result = await resolvedAi.ai.toMarkdown({ name: safeName, blob: upload });
     const converted = Array.isArray(result) ? result[0] : result;
     if (!converted || converted.format === "error" || typeof converted.data !== "string") {
       console.error("Workers AI document conversion failed", { error: converted?.error ?? "No conversion result" });
@@ -708,13 +806,14 @@ const hasImageGenerationIntent = (
 const handleToolChat = (
   request: Request,
   env: Env,
+  ai: WorkersAiBinding,
+  oauthSessionId: string | undefined,
   modelId: string,
   messages: ReturnType<typeof buildAiMessages>["messages"],
   temperature: number,
   maxTokens: number,
   imageModelId: string,
 ): Response => {
-  const ai = env.AI as WorkersAiBinding;
   const imageModel = getImageModel(imageModelId);
   const prefersChinese = request.headers.get("accept-language")?.toLowerCase().startsWith("zh") ?? false;
   let cancelled = false;
@@ -779,6 +878,7 @@ const handleToolChat = (
                 clientId: getClientId(request),
                 jobId,
                 modelId: imageModel.id,
+                oauthSessionId,
                 prompt,
               },
               retention: { successRetention: "1 day", errorRetention: "1 day" },
@@ -961,11 +1061,15 @@ const handleChat = async (request: Request, env: Env): Promise<Response> => {
       ? Math.min(2, Math.max(0, body.temperature))
       : 0.6;
   const maxTokens = clampOutputTokens(body.maxTokens, getOutputTokenPolicyForModel(body.model));
+  const resolvedAi = await resolveAiForRequest(request, env);
+  if (!resolvedAi.ok) return resolvedAi.response;
 
   if (supportsTools && hasImageGenerationIntent(builtInput.messages)) {
     return handleToolChat(
       request,
       env,
+      resolvedAi.ai,
+      resolvedAi.oauthSessionId,
       body.model,
       builtInput.messages,
       temperature,
@@ -975,8 +1079,7 @@ const handleChat = async (request: Request, env: Env): Promise<Response> => {
   }
 
   try {
-    const ai = env.AI as WorkersAiBinding;
-    const result = await ai.run(body.model, {
+    const result = await resolvedAi.ai.run(body.model, {
       ...modelInput,
       temperature,
       max_tokens: maxTokens,
@@ -1023,6 +1126,9 @@ export default {
         },
       });
     }
+
+    const oauthResponse = await handleOAuthRoute(request, env);
+    if (oauthResponse) return oauthResponse;
 
     if (request.method === "GET" && url.pathname === "/api/health") {
       return json({

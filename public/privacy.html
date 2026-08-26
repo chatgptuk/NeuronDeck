@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>隐私说明 · NeuronDeck</title>
+    <link rel="icon" href="/favicon.svg" />
+    <style>
+      :root{font-family:"SF Pro Text","PingFang SC",system-ui,sans-serif;color:#202a25;background:#edf1eb}*{box-sizing:border-box}body{margin:0;padding:32px 20px}main{width:min(720px,100%);margin:0 auto;border:1px solid rgba(31,46,38,.11);border-radius:26px;background:#fbfcf9;padding:clamp(28px,6vw,58px);box-shadow:0 24px 70px rgba(31,42,36,.11)}a{color:#326550}header{margin-bottom:40px}header a{text-decoration:none;font-size:13px}h1{margin:20px 0 10px;font-family:"Iowan Old Style","Songti SC",serif;font-size:clamp(34px,7vw,52px);font-weight:580;letter-spacing:-.045em}header p,section p,li{color:#53615a;line-height:1.85}h2{margin:32px 0 9px;font-size:17px}ul{padding-left:1.2em}.date{font-size:12px;color:#7a857f}@media(prefers-color-scheme:dark){:root{color:#eef3ef;background:#19221e}main{border-color:rgba(231,241,234,.1);background:#202a25}header p,section p,li,.date{color:#b5c1ba}a{color:#b9d8c9}}
+    </style>
+  </head>
+  <body>
+    <main>
+      <header><a href="/">← 返回 NeuronDeck</a><h1>隐私说明</h1><p>NeuronDeck 只收集运行对话和 Cloudflare 授权所必需的数据。</p><span class="date">更新于 2026 年 8 月 26 日</span></header>
+      <section><h2>本地对话</h2><p>对话内容与偏好默认保存在你的浏览器本地。除非你主动发送消息、文件或图片，它们不会上传到服务端。</p></section>
+      <section><h2>Cloudflare 授权</h2><p>连接 Cloudflare 时，我们使用 OAuth 2.0 Authorization Code 与 PKCE。访问令牌和刷新令牌经 AES-GCM 加密后保存在 Cloudflare KV，并通过仅限 HTTP、Secure、SameSite=Lax 的会话 Cookie 关联；令牌不会写入浏览器存储。</p><p>应用只申请 Account Settings Read、Workers AI Read 与 offline_access，用于列出你授权的账户、调用 Workers AI 以及安全续期。你可以随时在设置中撤销授权。</p></section>
+      <section><h2>AI 请求与生成内容</h2><p>你发送的内容会交给所选 Cloudflare Workers AI 模型处理。连接个人账户后，请求计入该账户的额度；未连接时使用本站额度。长时生图任务的结果可能存放在受访问令牌保护的 Cloudflare R2 中，以便任务完成后交付。</p></section>
+      <section><h2>第三方与安全</h2><p>服务由 Cloudflare Workers、Workers AI、KV、R2 与 Workflows 提供。我们不出售个人信息，也不会读取你的 Cloudflare 密码、MFA 信息或 API 密钥。</p></section>
+      <section><h2>联系</h2><p>如需删除授权会话或咨询隐私问题，请通过 <a href="https://chatgpt.org.uk">chatgpt.org.uk</a> 联系站点运营者。</p></section>
+    </main>
+  </body>
+</html>

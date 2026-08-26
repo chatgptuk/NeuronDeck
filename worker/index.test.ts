@@ -54,6 +54,46 @@ const textRequestFor = (model: string, maxTokens?: number) =>
     }),
   });
 
+describe("Cloudflare OAuth routes", () => {
+  it("reports anonymous mode when OAuth is not configured", async () => {
+    const { env } = createEnv();
+    const response = await worker.fetch(
+      new Request("https://ai.chatgpt.org.uk/api/auth/session"),
+      env as never,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ configured: false, authenticated: false });
+  });
+
+  it("starts a PKCE authorization without exposing a client secret", async () => {
+    const { env } = createEnv();
+    const put = vi.fn(async () => undefined);
+    const oauthEnv = {
+      ...env,
+      AUTH_SESSIONS: { put, get: vi.fn(), delete: vi.fn() },
+      CLOUDFLARE_OAUTH_CLIENT_ID: "oauth-client-id",
+      CLOUDFLARE_OAUTH_SCOPES: "ai.read account-settings.read offline_access",
+      OAUTH_SESSION_SECRET: btoa("0123456789abcdef0123456789abcdef"),
+    };
+    const response = await worker.fetch(
+      new Request("https://ai.chatgpt.org.uk/api/auth/cloudflare/start"),
+      oauthEnv as never,
+    );
+    const location = new URL(response.headers.get("location")!);
+
+    expect(response.status).toBe(302);
+    expect(location.origin).toBe("https://dash.cloudflare.com");
+    expect(location.pathname).toBe("/oauth2/auth");
+    expect(location.searchParams.get("response_type")).toBe("code");
+    expect(location.searchParams.get("code_challenge_method")).toBe("S256");
+    expect(location.searchParams.get("client_id")).toBe("oauth-client-id");
+    expect(location.searchParams.get("scope")).toBe("ai.read account-settings.read offline_access");
+    expect(response.headers.get("set-cookie")).toContain("HttpOnly");
+    expect(put).toHaveBeenCalledOnce();
+  });
+});
+
 describe("worker multimodal requests", () => {
   it("passes structured image content to current vision models", async () => {
     const { env, run } = createEnv();

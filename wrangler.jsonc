@@ -18,6 +18,16 @@
   "ai": {
     "binding": "AI"
   },
+  "kv_namespaces": [
+    {
+      "binding": "AUTH_SESSIONS",
+      "id": "REDACTED_KV_NAMESPACE_ID"
+    }
+  ],
+  "vars": {
+    "CLOUDFLARE_OAUTH_CLIENT_ID": "REDACTED_OAUTH_CLIENT_ID",
+    "CLOUDFLARE_OAUTH_SCOPES": "ai.read account-settings.read offline_access"
+  },
   "r2_buckets": [
     {
       "binding": "IMAGE_RESULTS",
