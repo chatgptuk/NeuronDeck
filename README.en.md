@@ -110,7 +110,7 @@ npm run check
 wrangler deploy
 ```
 
-To use a custom domain, add `routes` to your own Wrangler configuration and confirm that the domain belongs to the active Cloudflare account before deploying. The repository owner publishes the demo with a separate `wrangler.production.jsonc`, keeping production routes and resource identifiers out of the public template.
+To use a custom domain, copy [`wrangler.production.example.jsonc`](./wrangler.production.example.jsonc), fill in your own domain and resource identifiers, and save the real configuration as `.wrangler.production.jsonc`, which Git ignores. Confirm that the domain and resources belong to the active Cloudflare account before deploying.
 
 ## Refresh the model catalog
 
@@ -145,4 +145,4 @@ Llama Guard is excluded because it is a safety classifier rather than a chat mod
 
 ## License
 
-This repository does not currently include an open-source license. Public visibility does not grant permission to copy, modify, or redistribute the code; contact the repository owner before reuse.
+This project is licensed under the [MIT License](./LICENSE).

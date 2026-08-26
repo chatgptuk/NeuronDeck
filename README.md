@@ -110,7 +110,7 @@ npm run check
 wrangler deploy
 ```
 
-如需自定义域名，请在自己的 Wrangler 配置中设置 `routes`，确认域名属于当前 Cloudflare 账户后再部署。仓库维护者使用独立的 `wrangler.production.jsonc` 发布演示站，避免公开模板误绑定生产域名或资源。
+如需自定义域名，请复制 [`wrangler.production.example.jsonc`](./wrangler.production.example.jsonc)，填写你自己的域名与资源标识，并将真实配置保存为已被 Git 忽略的 `.wrangler.production.jsonc`。部署前请确认域名和资源都属于当前 Cloudflare 账户。
 
 ## 更新模型目录
 
@@ -145,4 +145,4 @@ Llama Guard 是安全分类器而不是对话模型，因此未列入聊天模�
 
 ## 许可证
 
-当前仓库尚未附带开源许可证。公开可见不等同于授予复制、修改或分发许可；如需复用，请先联系仓库所有者。
+本项目采用 [MIT License](./LICENSE)。

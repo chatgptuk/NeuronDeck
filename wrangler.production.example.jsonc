@@ -1,0 +1,58 @@
+{
+  "name": "your-neurondeck-worker",
+  "main": "./worker/index.ts",
+  "compatibility_date": "2026-08-25",
+  "workers_dev": false,
+  "routes": [
+    {
+      "pattern": "ai.your-domain.example",
+      "custom_domain": true
+    }
+  ],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "ai": {
+    "binding": "AI"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "AUTH_SESSIONS",
+      "id": "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+    }
+  ],
+  "vars": {
+    "CLOUDFLARE_OAUTH_CLIENT_ID": "REPLACE_WITH_YOUR_OAUTH_CLIENT_ID",
+    "CLOUDFLARE_OAUTH_SCOPES": "ai.read account-settings.read offline_access"
+  },
+  "r2_buckets": [
+    {
+      "binding": "IMAGE_RESULTS",
+      "bucket_name": "your-image-results-bucket"
+    }
+  ],
+  "workflows": [
+    {
+      "binding": "IMAGE_WORKFLOW",
+      "name": "your-neurondeck-image-generation",
+      "class_name": "ImageGenerationWorkflow"
+    }
+  ],
+  "ratelimits": [
+    {
+      "name": "CHAT_RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": {
+        "limit": 10,
+        "period": 60
+      }
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}

@@ -4,6 +4,7 @@ dist/
 .dev.vars
 .dev.vars.*
 !.dev.vars.example
+.wrangler.production.jsonc
 *.log
 .DS_Store
 coverage/
