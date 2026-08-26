@@ -642,14 +642,67 @@ const extractCompletion = (result: unknown): { content: string; reasoning: strin
   };
 };
 
-const completionClaimsImageCreated = (content: string): boolean => {
-  const compact = content.replace(/\s+/g, " ").trim();
-  if (!compact) return false;
-  return (
-    /(?:已|已经).{0,16}(?:生成|创作|制作|绘制|完成).{0,100}(?:图|图片|图像|海报|插画|照片|头像|图标)/u.test(compact) ||
-    /\b(?:(?:i|we)(?:'ve| have)|successfully|now)\s+(?:generated|created|made|rendered|designed)\b/i.test(compact) ||
-    /\b(?:image|picture|poster|illustration|photo|portrait|icon)\s+(?:has been|is now)\s+(?:generated|created|rendered|ready)\b/i.test(compact)
+const getMessageText = (content: unknown): string => {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.flatMap((part) =>
+    part && typeof part === "object" && typeof (part as { text?: unknown }).text === "string"
+      ? [(part as { text: string }).text]
+      : [],
+  ).join(" ");
+};
+
+const hasImageGenerationIntent = (
+  messages: ReturnType<typeof buildAiMessages>["messages"],
+): boolean => {
+  let lastUserIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index].role === "user") {
+      lastUserIndex = index;
+      break;
+    }
+  }
+  if (lastUserIndex < 0) return false;
+  const prompt = getMessageText(messages[lastUserIndex].content).replace(/\s+/g, " ").trim();
+  if (!prompt) return false;
+
+  const rejectsCreation =
+    /(?:不要|不用|无需|别|停止|取消).{0,12}(?:生成|画|绘制|创作|制作|设计|渲染|生图|出图)/u.test(prompt) ||
+    /\b(?:do not|don't|dont|no need to|stop|cancel)\b.{0,40}\b(?:generate|create|draw|paint|render|make)\b/i.test(prompt);
+  if (rejectsCreation) return false;
+
+  const chineseVisual = /(?:图(?:片|像|画|标|解|表)?|照片|相片|插画|海报|封面|头像|壁纸|画面|漫画|表情包|贴纸|标志|视觉稿|效果图|渲染图|流程图|场景图|产品图|人物像|肖像|Logo)/iu;
+  const chineseCreate = /(?:生成|画|绘制|创作|制作|设计|渲染|生图|出图)/u;
+  const chineseDiscussion = /(?:怎么|如何|教程|原理|API|接口|价格|费用|哪些|什么模型|模型有哪些|是什么意思|什么意思)/iu;
+  const explicitChinese =
+    !chineseDiscussion.test(prompt) && chineseCreate.test(prompt) && chineseVisual.test(prompt);
+  const directChinese = !chineseDiscussion.test(prompt) && (
+    /(?:生成|创作)(?:给我|一下)?(?:一|两|几)?(?:张|幅).{0,80}/u.test(prompt) ||
+    /(?:绘制|画)(?:给我|一下|一个|一张|一幅|个|只|几张|张|幅).{1,80}/u.test(prompt) ||
+    /(?:给我|帮我|请|麻烦|替我).{0,10}(?:画|绘制).{1,80}/u.test(prompt) ||
+    /(?:再来|来|换|另来)(?:一|两|几)?张/u.test(prompt)
   );
+
+  const englishVisual = /\b(?:image|picture|photo|photograph|illustration|poster|cover|avatar|wallpaper|artwork|graphic|logo|icon|portrait|sticker|comic|diagram|3d render)\b/i;
+  const englishCreate = /\b(?:generate|create|draw|paint|illustrate|render|design|make)\b/i;
+  const englishHowTo = /\b(?:how (?:do|can|to)|tutorial|api|pricing|price|which model|what model)\b.{0,80}\b(?:generate|create|draw|paint|render)\b/i;
+  const explicitEnglish = !englishHowTo.test(prompt) && englishCreate.test(prompt) && englishVisual.test(prompt);
+  const directEnglish =
+    /\b(?:draw|paint|illustrate|sketch)\s+(?:me\s+)?(?:a|an|the|this)?\b/i.test(prompt) &&
+    !/\bdraw\s+(?:a\s+)?(?:conclusion|comparison|parallel|attention)\b/i.test(prompt);
+
+  if (explicitChinese || directChinese || explicitEnglish || directEnglish) return true;
+
+  const priorText = messages.slice(0, lastUserIndex).map((message) => getMessageText(message.content)).join(" ");
+  const hasPriorVisual =
+    (chineseCreate.test(priorText) && chineseVisual.test(priorText)) ||
+    /(?:图片|图像|照片|插画|海报).{0,20}(?:生成好了|生成成功|已经生成|完成)/u.test(priorText) ||
+    (englishCreate.test(priorText) && englishVisual.test(priorText)) ||
+    /\b(?:image|picture|photo|illustration).{0,30}(?:generated|created|ready|complete)\b/i.test(priorText);
+  const asksForVariation =
+    /(?:再来|再做|再画|再生成|重新|重做|重绘|换一|换个|另一个|变体|改成|换成|背景换|风格换)/u.test(prompt) ||
+    /\b(?:another one|one more|try again|regenerate|remake|redraw|variation|new version|change (?:it|the)|make it)\b/i.test(prompt);
+  return hasPriorVisual && asksForVariation;
 };
 
 const handleToolChat = (
@@ -763,54 +816,23 @@ const handleToolChat = (
         const decision = await ai.run(modelId, {
           messages: toolMessages,
           tools: [imageToolDefinition],
-          tool_choice: "auto",
+          tool_choice: "required",
           parallel_tool_calls: false,
           temperature,
           max_tokens: maxTokens,
           stream: false,
         });
-        let toolCalls = extractToolCalls(decision);
+        const toolCalls = extractToolCalls(decision);
 
         if (!toolCalls.length) {
-          const completion = extractCompletion(decision);
-          if (completionClaimsImageCreated(completion.content)) {
-            const correctiveDecision = await ai.run(modelId, {
-              messages: [
-                toolMessages[0],
-                {
-                  role: "system",
-                  content:
-                    "Your previous draft claimed an image was created, but no tool was called. " +
-                    "You must now call generate_image exactly once. Infer a complete prompt from the conversation, including referenced prior image context and requested changes.",
-                },
-                ...toolMessages.slice(1),
-              ],
-              tools: [imageToolDefinition],
-              tool_choice: "required",
-              parallel_tool_calls: false,
-              temperature,
-              max_tokens: maxTokens,
-              stream: false,
-            });
-            toolCalls = extractToolCalls(correctiveDecision);
-            if (!toolCalls.length) {
-              const message = prefersChinese
-                ? "聊天模型没有成功启动生图工具，请重试或补充画面要求。"
-                : "The chat model did not start the image tool. Try again or add more visual detail.";
-              sendImageState({ status: "error", modelId: imageModel.id, modelName: imageModel.name, message });
-              send({ response: message });
-              send({ done: true });
-              if (!cancelled) controller.close();
-              return;
-            }
-          } else {
-            if (completion.reasoning) send({ reasoning: completion.reasoning });
-            send({ response: completion.content || (prefersChinese ? "模型没有返回内容。" : "The model returned no content.") });
-            if (completion.usage) send({ usage: completion.usage });
-            send({ done: true });
-            if (!cancelled) controller.close();
-            return;
-          }
+          const message = prefersChinese
+            ? "聊天模型没有成功启动生图工具，请重试或补充画面要求。"
+            : "The chat model did not start the image tool. Try again or add more visual detail.";
+          sendImageState({ status: "error", modelId: imageModel.id, modelName: imageModel.name, message });
+          send({ response: message });
+          send({ done: true });
+          if (!cancelled) controller.close();
+          return;
         }
 
         const nextMessages: Array<Record<string, unknown>> = [...toolMessages];
@@ -940,7 +962,7 @@ const handleChat = async (request: Request, env: Env): Promise<Response> => {
       : 0.6;
   const maxTokens = clampOutputTokens(body.maxTokens, getOutputTokenPolicyForModel(body.model));
 
-  if (supportsTools) {
+  if (supportsTools && hasImageGenerationIntent(builtInput.messages)) {
     return handleToolChat(
       request,
       env,

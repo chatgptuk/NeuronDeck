@@ -106,6 +106,47 @@ describe("worker output token policy", () => {
 });
 
 describe("image generation function calling", () => {
+  it("passes ordinary tool-model replies through the native stream", async () => {
+    let finishStream: (() => void) | undefined;
+    const run = vi.fn(async (_model: string, input: Record<string, unknown>) =>
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('data: {"response":"第一段"}\n\n'));
+          finishStream = () => {
+            controller.enqueue(new TextEncoder().encode('data: {"response":"第二段"}\n\ndata: [DONE]\n\n'));
+            controller.close();
+          };
+        },
+      }),
+    );
+    const env = {
+      AI: { run, toMarkdown: vi.fn() },
+      ASSETS: { fetch: vi.fn() },
+      CHAT_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+    };
+    const request = new Request("https://ai.chatgpt.org.uk/api/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-neurondeck-client": "test-client-1234" },
+      body: JSON.stringify({
+        model: chatModel,
+        messages: [{ role: "user", content: "请生成一个 TypeScript 函数来解释浏览器的事件循环" }],
+      }),
+    });
+
+    const response = await worker.fetch(request, env as never);
+    const reader = response.body!.getReader();
+    const first = await reader.read();
+
+    expect(new TextDecoder().decode(first.value)).toContain("第一段");
+    expect(first.done).toBe(false);
+    expect(run).toHaveBeenCalledOnce();
+    expect(run.mock.calls[0][1]).toEqual(expect.objectContaining({ stream: true }));
+    expect(run.mock.calls[0][1]).not.toHaveProperty("tools");
+
+    finishStream?.();
+    await reader.cancel();
+  });
+
   it("lets a tool-capable chat model invoke the selected image model", async () => {
     const calls: Array<{ model: string; input: Record<string, unknown> }> = [];
     const ai = {
@@ -277,15 +318,12 @@ describe("image generation function calling", () => {
     await expect(response.json()).resolves.toMatchObject({ error: { code: "invalid_image_model" } });
   });
 
-  it("forces a corrective tool call when the model falsely claims an image was generated", async () => {
+  it("uses a required tool call for a referential image follow-up", async () => {
     const calls: Array<{ model: string; input: Record<string, unknown> }> = [];
     const ai = {
       run: vi.fn(async (model: string, input: Record<string, unknown>) => {
         calls.push({ model, input });
         if (model === imageModel) return { image: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB" };
-        if (input.tool_choice === "auto") {
-          return { choices: [{ message: { role: "assistant", content: "已为您生成了一张新的街拍照片。" } }] };
-        }
         if (input.tool_choice === "required") {
           return {
             choices: [{
@@ -342,13 +380,12 @@ describe("image generation function calling", () => {
     const response = await worker.fetch(request, env as never);
     const body = await response.text();
 
-    expect(calls.map((call) => call.model)).toEqual([chatModel, chatModel, imageModel, chatModel]);
-    expect(calls[1].input.tool_choice).toBe("required");
-    expect(JSON.stringify(calls[1].input.messages)).toContain("referenced prior image context");
+    expect(calls.map((call) => call.model)).toEqual([chatModel, imageModel, chatModel]);
+    expect(calls[0].input.tool_choice).toBe("required");
+    expect(JSON.stringify(calls[0].input.messages)).toContain("referential follow-up");
     expect(body).toContain('"status":"generating"');
     expect(body).toContain('"generated_image"');
     expect(body).toMatch(/"elapsedMs":\d+/);
-    expect(body).not.toContain("已为您生成了一张新的街拍照片");
   });
 });
 
