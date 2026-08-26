@@ -475,6 +475,10 @@ input:focus-visible {
   .composer-wrap::before { right: 0; left: 0; }
   .inspector { top: 8px; right: 8px; bottom: 8px; }
   .inspector.open { width: min(350px, calc(100% - 16px)); }
+  .composer textarea,
+  .model-search input,
+  .inspector-section textarea,
+  .number-input { font-size: 16px; }
   .model-grid { grid-template-columns: 1fr; }
   .model-picker { height: calc(100dvh - 20px); max-height: calc(100dvh - 20px); border-radius: 24px; }
   .modal-backdrop { padding: 10px; }
@@ -506,7 +510,7 @@ input:focus-visible {
   .welcome-state > p { font-size: 11px; line-height: 1.65; }
   .starter-grid button:nth-child(n + 3) { display: none; }
   .composer { border-radius: 20px; padding: 12px 12px 10px 14px; }
-  .composer textarea { font-size: 13px; }
+  .composer textarea { font-size: 16px; }
   .composer-badges > span { display: none; }
   .composer-badges button { max-width: 140px; }
   .attachment-card.file { width: 100%; }
