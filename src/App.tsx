@@ -55,6 +55,7 @@ import {
 } from "./lib/attachments";
 import { consumeChatStream } from "./lib/stream";
 import { loadWorkspace, saveWorkspace } from "./lib/storage";
+import { hasRenderableMessageOutput } from "./lib/message-output";
 import {
   DEFAULT_IMAGE_MODEL_ID,
   getImageModel,
@@ -898,7 +899,7 @@ function App() {
                           <div className="typing"><span /><span /><span /></div>
                         )}
                       </div>
-                      {(message.content || message.generatedImages?.length) && message.status !== "streaming" && (
+                      {hasRenderableMessageOutput(message) && message.status !== "streaming" && (
                         <div className="message-actions">
                           <button onClick={() => void copyMessage(message)} type="button">
                             {copiedMessageId === message.id ? <Check size={14} /> : <Copy size={14} />}
