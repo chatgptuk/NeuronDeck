@@ -310,7 +310,32 @@ input:focus-visible {
 
 .code-block { position: relative; margin: 1.25em 0; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 16px; background: #1f2a25; box-shadow: 0 14px 30px rgba(28, 41, 35, 0.13); overflow: hidden; }
 .code-block pre { margin: 0; padding: 44px 17px 17px; overflow-x: auto; }
-.code-block code { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; font-size: 11px; line-height: 1.65; }
+.code-block code { color: #e8f0eb; font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; font-size: 11px; line-height: 1.65; }
+.code-block .hljs-comment,
+.code-block .hljs-quote { color: #91a39a; font-style: italic; }
+.code-block .hljs-keyword,
+.code-block .hljs-selector-tag,
+.code-block .hljs-literal,
+.code-block .hljs-section,
+.code-block .hljs-link { color: #e0ad83; }
+.code-block .hljs-string,
+.code-block .hljs-attr,
+.code-block .hljs-symbol,
+.code-block .hljs-bullet,
+.code-block .hljs-addition { color: #a9d7b8; }
+.code-block .hljs-title,
+.code-block .hljs-title.class_,
+.code-block .hljs-title.function_,
+.code-block .hljs-selector-id,
+.code-block .hljs-selector-class { color: #8fcac0; }
+.code-block .hljs-number,
+.code-block .hljs-built_in,
+.code-block .hljs-variable,
+.code-block .hljs-template-variable,
+.code-block .hljs-type { color: #ddc789; }
+.code-block .hljs-meta,
+.code-block .hljs-attribute { color: #bdb0e2; }
+.code-block .hljs-deletion { color: #ee9b96; }
 .code-copy { position: absolute; z-index: 1; top: 9px; right: 9px; display: flex; align-items: center; gap: 5px; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; background: rgba(255, 255, 255, 0.055); padding: 5px 8px; color: #c4d1ca; font-size: 9px; }
 .reasoning-block { margin-bottom: 15px; border: 1px solid var(--line); border-radius: 14px; background: var(--accent-pale); padding: 10px 13px; color: var(--muted-strong); font-size: 11px; }
 .reasoning-block summary { color: var(--amber); cursor: pointer; font-size: 9px; font-weight: 650; }
