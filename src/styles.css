@@ -395,6 +395,7 @@ input:focus-visible {
   display: flex;
   min-height: 0;
   flex: 1;
+  overflow: hidden;
 }
 
 .chat-panel {
@@ -1259,6 +1260,7 @@ input:focus-visible {
   .message-content { margin-left: 0; }
   .message-actions { margin-left: -4px; }
   .composer-wrap { width: calc(100% - 22px); }
+  .composer-wrap::before { right: 0; left: 0; }
   .model-grid { grid-template-columns: 1fr; }
   .model-picker { max-height: calc(100dvh - 20px); border-radius: 16px; }
   .modal-backdrop { padding: 10px; }
