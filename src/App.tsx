@@ -1050,7 +1050,7 @@ function App() {
                           language={language}
                         />
                         {message.reasoning && (
-                          <details className="reasoning-block">
+                          <details className="reasoning-block" open={message.status === "streaming"}>
                             <summary>{t.reasoningTrace}</summary>
                             <div className="reasoning-markdown">
                               <Suspense fallback={<p>{message.reasoning}</p>}>
