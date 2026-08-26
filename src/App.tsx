@@ -811,32 +811,32 @@ function App() {
         <div className="sidebar-label"><MessageSquareText size={13} />{t.conversations}</div>
         <nav className="conversation-list" aria-label={t.conversations}>
           {groupedConversations.map((conversation) => (
-            <button
-              key={conversation.id}
-              type="button"
-              className={conversation.id === activeConversation.id ? "conversation-item active" : "conversation-item"}
-              onClick={() => {
-                setWorkspace((current) => ({ ...current, activeConversationId: conversation.id }));
-                setSidebarOpen(false);
-                setComposer("");
-                setPendingAttachments([]);
-                setAttachmentError(null);
-              }}
-            >
-              <span className="conversation-title">{conversationTitle(conversation.title)}</span>
-              <span className="conversation-meta">
-                {getModel(models, conversation.modelId).name}
-                <Trash2
-                  size={14}
-                  role="button"
-                  aria-label={`${t.deleteConversation}：${conversationTitle(conversation.title)}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    deleteConversation(conversation.id);
-                  }}
-                />
-              </span>
-            </button>
+            <div className="conversation-row" key={conversation.id}>
+              <button
+                type="button"
+                className={conversation.id === activeConversation.id ? "conversation-item active" : "conversation-item"}
+                onClick={() => {
+                  setWorkspace((current) => ({ ...current, activeConversationId: conversation.id }));
+                  setSidebarOpen(false);
+                  setComposer("");
+                  setPendingAttachments([]);
+                  setAttachmentError(null);
+                }}
+              >
+                <span className="conversation-title">{conversationTitle(conversation.title)}</span>
+                <span className="conversation-meta">{getModel(models, conversation.modelId).name}</span>
+              </button>
+              <button
+                className="conversation-delete"
+                type="button"
+                disabled={generating}
+                aria-label={`${t.deleteConversation}：${conversationTitle(conversation.title)}`}
+                title={t.deleteConversation}
+                onClick={() => deleteConversation(conversation.id)}
+              >
+                <Trash2 size={15} />
+              </button>
+            </div>
           ))}
         </nav>
 

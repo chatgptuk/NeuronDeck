@@ -176,6 +176,7 @@ input:focus-visible {
 .sidebar-label { display: flex; align-items: center; gap: 7px; padding: 0 9px 10px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: 0.02em; }
 .sidebar-label svg { opacity: 0.72; }
 .conversation-list { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 5px; padding: 1px 0; overflow-y: auto; }
+.conversation-row { position: relative; flex: 0 0 auto; }
 
 .conversation-item {
   position: relative;
@@ -186,7 +187,7 @@ input:focus-visible {
   border: 1px solid transparent;
   border-radius: 12px;
   background: transparent;
-  padding: 11px 12px;
+  padding: 11px 45px 11px 12px;
   text-align: left;
   transition: background 150ms ease, box-shadow 150ms ease;
 }
@@ -196,9 +197,13 @@ input:focus-visible {
 .conversation-item.active::before { position: absolute; width: 2px; border-radius: 999px; background: var(--accent); content: ""; inset: 11px auto 11px 0; }
 .conversation-title { width: 100%; overflow: hidden; color: var(--text); font-size: 12px; font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
 .conversation-meta { display: flex; width: 100%; align-items: center; color: var(--muted); font-size: 10px; }
-.conversation-meta svg { margin-left: auto; opacity: 0; transition: opacity 140ms ease; }
-.conversation-item:hover .conversation-meta svg { opacity: 1; }
-.conversation-meta svg:hover { color: var(--danger); }
+.conversation-delete { position: absolute; top: 50%; right: 5px; display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid transparent; border-radius: 10px; background: transparent; color: var(--muted); opacity: 0; pointer-events: none; transform: translateY(-50%); transition: border-color 140ms ease, background 140ms ease, color 140ms ease, opacity 140ms ease; }
+.conversation-row:hover .conversation-delete,
+.conversation-row:focus-within .conversation-delete { opacity: 1; pointer-events: auto; }
+.conversation-delete:hover,
+.conversation-delete:focus-visible { border-color: color-mix(in srgb, var(--danger) 18%, var(--line)); background: color-mix(in srgb, var(--danger) 7%, var(--panel-raised)); color: var(--danger); }
+.conversation-delete:disabled { cursor: not-allowed; opacity: 0.35; }
+.conversation-delete svg { stroke-width: 1.65; }
 
 .sidebar-footer { display: flex; flex-direction: column; gap: 4px; margin: 12px 2px 0; border-top: 1px solid var(--line); padding-top: 12px; }
 .storage-card,
@@ -566,6 +571,9 @@ input:focus-visible {
   .storage-card strong,
   .storage-card span,
   .sidebar-action { font-size: 11px; }
+  .conversation-item { min-height: 58px; padding-right: 50px; }
+  .conversation-delete { right: 4px; width: 42px; height: 42px; border-color: color-mix(in srgb, var(--line) 64%, transparent); border-radius: 13px; background: color-mix(in srgb, var(--panel-raised) 44%, transparent); opacity: 0.72; pointer-events: auto; }
+  .conversation-delete:active { background: color-mix(in srgb, var(--danger) 9%, var(--panel-raised)); color: var(--danger); opacity: 1; }
   .welcome-state { width: calc(100% - 40px); align-items: flex-start; padding: 30px 0 38px; }
   .eyebrow { font-size: 11px; }
   .welcome-state h1 { font-size: clamp(36px, 10.5vw, 48px); }
