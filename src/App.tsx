@@ -8,6 +8,7 @@ import {
   LoaderCircle,
   Menu,
   MessageSquareText,
+  MoreHorizontal,
   Moon,
   PanelRight,
   Paperclip,
@@ -57,6 +58,8 @@ import { consumeChatStream } from "./lib/stream";
 import { loadWorkspace, saveWorkspace } from "./lib/storage";
 import { hasRenderableMessageOutput } from "./lib/message-output";
 import { getMessageContentForRequest } from "./lib/chat-context";
+import { isRecoverableStreamError, waitForPageVisible } from "./lib/stream-recovery";
+import { formatElapsedDuration, formatMessageTimestamp } from "./lib/time";
 import {
   DEFAULT_IMAGE_MODEL_ID,
   getImageModel,
@@ -169,6 +172,7 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const [revealedTimeMessageId, setRevealedTimeMessageId] = useState<string | null>(null);
   const [theme, setTheme] = useState<"dark" | "light">(
     () => (localStorage.getItem("neurondeck-theme-v2") as "dark" | "light" | null) ?? "light",
   );
@@ -188,6 +192,12 @@ function App() {
   const attachmentTarget = `${activeConversation.id}:${activeModel.id}`;
   const attachmentTargetRef = useRef(attachmentTarget);
   attachmentTargetRef.current = attachmentTarget;
+
+  useEffect(() => {
+    if (!revealedTimeMessageId) return;
+    const timeout = window.setTimeout(() => setRevealedTimeMessageId(null), 3_200);
+    return () => window.clearTimeout(timeout);
+  }, [revealedTimeMessageId]);
 
   useEffect(() => {
     let active = true;
@@ -338,60 +348,85 @@ function App() {
           ...(message.attachments?.length ? { attachments: message.attachments } : {}),
         })),
       ];
+      const requestBody = JSON.stringify({
+        model: conversation.modelId,
+        messages: apiMessages,
+        temperature: conversation.temperature,
+        maxTokens: conversation.maxTokens,
+        imageModel: conversation.imageModelId,
+      });
 
       try {
-        const response = await fetch("/api/chat", {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "x-neurondeck-client": getClientId(),
-            "accept-language": language === "zh" ? "zh-CN" : "en",
-          },
-          body: JSON.stringify({
-            model: conversation.modelId,
-            messages: apiMessages,
-            temperature: conversation.temperature,
-            maxTokens: conversation.maxTokens,
-            imageModel: conversation.imageModelId,
-          }),
-          signal: controller.signal,
-        });
+        let recoveryAttempts = 0;
+        while (true) {
+          try {
+            const response = await fetch("/api/chat", {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                "x-neurondeck-client": getClientId(),
+                "accept-language": language === "zh" ? "zh-CN" : "en",
+              },
+              body: requestBody,
+              signal: controller.signal,
+            });
 
-        if (!response.ok) {
-          const data = (await response.json().catch(() => null)) as
-            | { error?: { code?: string; message?: string } }
-            | null;
-          throw new Error(
-            getLocalizedError(language, data?.error?.code, data?.error?.message || t.requestFailed(response.status)),
-          );
-        }
+            if (!response.ok) {
+              const data = (await response.json().catch(() => null)) as
+                | { error?: { code?: string; message?: string } }
+                | null;
+              throw new Error(
+                getLocalizedError(language, data?.error?.code, data?.error?.message || t.requestFailed(response.status)),
+              );
+            }
 
-        await consumeChatStream(response, (event) => {
-          if (event.error) {
-            throw new Error(language === "zh" ? t.errors.inference_failed : event.error);
-          }
-          if (event.content) content += event.content;
-          if (event.reasoning) reasoning += event.reasoning;
-          if (event.generatedImage) generatedImages = [...generatedImages, event.generatedImage];
-          if (event.content || event.reasoning || event.generatedImage || event.imageGeneration) {
+            await consumeChatStream(response, (event) => {
+              if (event.error) {
+                throw new Error(language === "zh" ? t.errors.inference_failed : event.error);
+              }
+              if (event.content) content += event.content;
+              if (event.reasoning) reasoning += event.reasoning;
+              if (event.generatedImage) generatedImages = [...generatedImages, event.generatedImage];
+              if (event.content || event.reasoning || event.generatedImage || event.imageGeneration) {
+                updateMessage(conversation.id, assistantId, (message) => ({
+                  ...message,
+                  content,
+                  reasoning,
+                  generatedImages,
+                  imageGeneration: event.imageGeneration ??
+                    (event.generatedImage
+                      ? {
+                          status: "complete",
+                          modelId: event.generatedImage.modelId,
+                          modelName: event.generatedImage.modelName,
+                          prompt: event.generatedImage.prompt,
+                        }
+                      : message.imageGeneration),
+                  status: "streaming",
+                }));
+              }
+            });
+            break;
+          } catch (error) {
+            if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
+            if (isRecoverableStreamError(error) && generatedImages.length) break;
+            if (!isRecoverableStreamError(error) || recoveryAttempts >= 1) throw error;
+
+            recoveryAttempts += 1;
+            await waitForPageVisible(controller.signal);
+            content = "";
+            reasoning = "";
+            generatedImages = [];
             updateMessage(conversation.id, assistantId, (message) => ({
               ...message,
-              content,
-              reasoning,
-              generatedImages,
-              imageGeneration: event.imageGeneration ??
-                (event.generatedImage
-                  ? {
-                      status: "complete",
-                      modelId: event.generatedImage.modelId,
-                      modelName: event.generatedImage.modelName,
-                      prompt: event.generatedImage.prompt,
-                    }
-                  : message.imageGeneration),
+              content: "",
+              reasoning: "",
+              generatedImages: [],
+              imageGeneration: undefined,
               status: "streaming",
             }));
           }
-        });
+        }
 
         updateMessage(conversation.id, assistantId, (message) => ({
           ...message,
@@ -870,7 +905,7 @@ function App() {
                         )}
                         <div>
                           <strong>{message.role === "user" ? t.you : getModel(models, message.modelId ?? activeModel.id).name}</strong>
-                          <span>{message.elapsedMs ? `${(message.elapsedMs / 1000).toFixed(1)}s` : message.status === "streaming" ? t.generating : ""}</span>
+                          <span>{message.elapsedMs != null ? formatElapsedDuration(message.elapsedMs, language) : message.status === "streaming" ? t.generating : ""}</span>
                         </div>
                       </div>
                       <div className={message.status === "error" ? "message-content error" : "message-content"}>
@@ -911,6 +946,18 @@ function App() {
                           ) : (
                             <button onClick={() => editMessage(message.id)} type="button"><Pencil size={14} />{t.editFromHere}</button>
                           )}
+                          <button
+                            className="message-time-toggle"
+                            type="button"
+                            aria-label={t.showMessageTime}
+                            aria-expanded={revealedTimeMessageId === message.id}
+                            onClick={() => setRevealedTimeMessageId((current) => current === message.id ? null : message.id)}
+                          ><MoreHorizontal size={14} /></button>
+                          <time
+                            className={revealedTimeMessageId === message.id ? "message-time revealed" : "message-time"}
+                            dateTime={message.createdAt}
+                            title={new Date(message.createdAt).toLocaleString(language === "zh" ? "zh-CN" : "en-US")}
+                          >{formatMessageTimestamp(message.createdAt, language)}</time>
                         </div>
                       )}
                     </article>

@@ -1,5 +1,6 @@
 import { Download, Maximize2, Sparkles } from "lucide-react";
 import { translations, type Language } from "../i18n";
+import { formatElapsedDuration } from "../lib/time";
 import type { GeneratedImage, ImageGenerationState } from "../types";
 
 const extensionForDataUrl = (dataUrl: string): string => {
@@ -42,7 +43,12 @@ export function GeneratedImageGallery({ images = [], state, language }: Generate
               <img src={image.dataUrl} alt={image.prompt} />
               <figcaption>
                 <span>
-                  <strong>{image.modelName}</strong>
+                  <strong>
+                    {image.modelName}
+                    {image.elapsedMs != null ? (
+                      <em>{t.imageGenerationDuration(formatElapsedDuration(image.elapsedMs, language))}</em>
+                    ) : null}
+                  </strong>
                   <small>{image.prompt}</small>
                 </span>
                 <span className="generated-image-actions">

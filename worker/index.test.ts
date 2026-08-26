@@ -175,6 +175,7 @@ describe("image generation function calling", () => {
     expect(body).toContain('"status":"generating"');
     expect(body).toContain('"modelId":"@cf/black-forest-labs/flux-2-klein-9b"');
     expect(body).toContain('"dataUrl":"data:image/png;base64,iVBOR');
+    expect(body).toMatch(/"elapsedMs":\d+/);
     expect(body).toContain("已经为你生成。");
   });
 
@@ -269,6 +270,7 @@ describe("image generation function calling", () => {
     expect(JSON.stringify(calls[1].input.messages)).toContain("referenced prior image context");
     expect(body).toContain('"status":"generating"');
     expect(body).toContain('"generated_image"');
+    expect(body).toMatch(/"elapsedMs":\d+/);
     expect(body).not.toContain("已为您生成了一张新的街拍照片");
   });
 });

@@ -1,5 +1,12 @@
 import type { GeneratedImage, ImageGenerationState, StreamEvent } from "../types";
 
+export class StreamInterruptedError extends Error {
+  constructor() {
+    super("The response stream ended before its completion marker.");
+    this.name = "StreamInterruptedError";
+  }
+}
+
 const getNestedContent = (value: unknown): StreamEvent => {
   if (typeof value === "string") return { content: value };
   if (!value || typeof value !== "object") return {};
@@ -50,27 +57,40 @@ export const consumeChatStream = async (
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let completed = false;
 
-  while (true) {
-    const { value, done } = await reader.read();
-    buffer += decoder.decode(value, { stream: !done });
-    const blocks = buffer.split(/\r?\n\r?\n/);
-    buffer = blocks.pop() ?? "";
+  const emit = (data: string) => {
+    const event = parseSseData(data);
+    if (event.done) completed = true;
+    onEvent(event);
+  };
 
-    for (const block of blocks) {
-      const data = block
-        .split(/\r?\n/)
-        .filter((line) => line.startsWith("data:"))
-        .map((line) => line.slice(5).trimStart())
-        .join("\n");
-      if (data) onEvent(parseSseData(data));
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+      const blocks = buffer.split(/\r?\n\r?\n/);
+      buffer = blocks.pop() ?? "";
+
+      for (const block of blocks) {
+        const data = block
+          .split(/\r?\n/)
+          .filter((line) => line.startsWith("data:"))
+          .map((line) => line.slice(5).trimStart())
+          .join("\n");
+        if (data) emit(data);
+      }
+      if (done) break;
     }
-    if (done) break;
+
+    const tail = buffer.trim();
+    if (tail) {
+      const data = tail.startsWith("data:") ? tail.slice(5).trimStart() : tail;
+      emit(data);
+    }
+  } finally {
+    if (!completed) await reader.cancel().catch(() => undefined);
   }
 
-  const tail = buffer.trim();
-  if (tail) {
-    const data = tail.startsWith("data:") ? tail.slice(5).trimStart() : tail;
-    onEvent(parseSseData(data));
-  }
+  if (!completed) throw new StreamInterruptedError();
 };

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseSseData } from "./stream";
+import { consumeChatStream, parseSseData, StreamInterruptedError } from "./stream";
 
 describe("Workers AI stream parser", () => {
   it("parses Workers AI response chunks", () => {
@@ -19,5 +19,17 @@ describe("Workers AI stream parser", () => {
       .toEqual({ imageGeneration: { status: "generating", modelId: "flux", modelName: "FLUX" } });
     expect(parseSseData('{"generated_image":{"id":"1","dataUrl":"data:image/png;base64,abc"}}'))
       .toEqual({ generatedImage: { id: "1", dataUrl: "data:image/png;base64,abc" } });
+  });
+
+  it("rejects streams that close without a completion marker", async () => {
+    const response = new Response('data: {"response":"partial"}\n\n');
+    await expect(consumeChatStream(response, () => undefined)).rejects.toBeInstanceOf(StreamInterruptedError);
+  });
+
+  it("accepts a complete SSE stream", async () => {
+    const events: unknown[] = [];
+    const response = new Response('data: {"response":"complete"}\n\ndata: [DONE]\n\n');
+    await expect(consumeChatStream(response, (event) => events.push(event))).resolves.toBeUndefined();
+    expect(events).toContainEqual({ done: true });
   });
 });

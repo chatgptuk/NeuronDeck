@@ -234,16 +234,19 @@ const generateImage = async (
   const model = getImageModel(modelId);
   const { width, height } = imageDimensions[aspectRatio];
   const seed = Math.floor(Math.random() * 2_147_483_647);
+  const startedAt = performance.now();
   const result = await ai.run(model.id, buildImageInput(model.id, prompt, width, height, seed));
+  const dataUrl = await normalizeImageOutput(result);
   return {
     id: crypto.randomUUID(),
-    dataUrl: await normalizeImageOutput(result),
+    dataUrl,
     modelId: model.id,
     modelName: model.name,
     prompt,
     width,
     height,
     seed,
+    elapsedMs: Math.max(1, Math.round(performance.now() - startedAt)),
   };
 };
 

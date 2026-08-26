@@ -40,6 +40,7 @@ export interface GeneratedImage {
   width: number;
   height: number;
   seed?: number;
+  elapsedMs?: number;
 }
 
 export interface ImageGenerationState {
