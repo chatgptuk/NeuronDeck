@@ -8,6 +8,8 @@ Production: [ai.chatgpt.org.uk](https://ai.chatgpt.org.uk)
 
 - 28 Cloudflare-hosted chat models from the live Workers AI catalog
 - Search, capability filters, favorites, context sizes, and per-token pricing
+- Chinese and English interface with localized model descriptions and a one-click language switch
+- Light appearance by default, with a persistent optional dark theme
 - Streaming generation with stop, regenerate, copy, and edit-from-here actions
 - Per-conversation system prompt, temperature, and maximum output tokens
 - Markdown, GitHub-flavored tables, syntax highlighting, and code copying

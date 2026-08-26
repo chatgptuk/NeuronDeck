@@ -4,6 +4,7 @@ import {
   ChevronDown,
   Copy,
   Download,
+  Languages,
   Menu,
   MessageSquareText,
   Moon,
@@ -20,6 +21,13 @@ import {
   X,
 } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  getCapabilityLabel,
+  getLocalizedError,
+  getModelDescription,
+  translations,
+  type Language,
+} from "./i18n";
 import {
   CATALOG_SYNCED_AT,
   DEFAULT_MODEL_ID,
@@ -42,13 +50,14 @@ const ModelPicker = lazy(() =>
 const id = (): string => crypto.randomUUID();
 const now = (): string => new Date().toISOString();
 
-const createConversation = (modelId = DEFAULT_MODEL_ID): Conversation => {
+const createConversation = (language: Language, modelId = DEFAULT_MODEL_ID): Conversation => {
   const timestamp = now();
+  const t = translations[language];
   return {
     id: id(),
-    title: "New conversation",
+    title: t.defaultConversation,
     modelId,
-    systemPrompt: "You are a precise, thoughtful assistant. Be candid about uncertainty and use clear formatting.",
+    systemPrompt: t.defaultSystemPrompt,
     temperature: 0.6,
     maxTokens: 2048,
     messages: [],
@@ -57,8 +66,8 @@ const createConversation = (modelId = DEFAULT_MODEL_ID): Conversation => {
   };
 };
 
-const createWorkspace = (): WorkspaceState => {
-  const conversation = createConversation();
+const createWorkspace = (language: Language): WorkspaceState => {
+  const conversation = createConversation(language);
   return {
     conversations: [conversation],
     activeConversationId: conversation.id,
@@ -80,23 +89,12 @@ const titleFromPrompt = (prompt: string): string => {
   return compact.length > 42 ? `${compact.slice(0, 42)}…` : compact;
 };
 
-const starterPrompts = [
-  {
-    label: "Explore an idea",
-    prompt: "Help me pressure-test a new product idea. Ask the three most important questions first.",
-  },
-  {
-    label: "Review some code",
-    prompt: "Review this code for correctness, security, and maintainability. Explain the highest-risk issue first.",
-  },
-  {
-    label: "Think it through",
-    prompt: "Analyze this problem from three different perspectives, then give me a concrete recommendation.",
-  },
-];
-
 function App() {
-  const [workspace, setWorkspace] = useState<WorkspaceState>(createWorkspace);
+  const [language, setLanguage] = useState<Language>(
+    () => (localStorage.getItem("neurondeck-language") === "en" ? "en" : "zh"),
+  );
+  const t = translations[language];
+  const [workspace, setWorkspace] = useState<WorkspaceState>(() => createWorkspace(language));
   const [models, setModels] = useState<ModelInfo[]>(FALLBACK_MODELS);
   const [catalogSyncedAt, setCatalogSyncedAt] = useState(CATALOG_SYNCED_AT);
   const [hydrated, setHydrated] = useState(false);
@@ -107,7 +105,7 @@ function App() {
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [theme, setTheme] = useState<"dark" | "light">(
-    () => (localStorage.getItem("neurondeck-theme") as "dark" | "light" | null) ?? "dark",
+    () => (localStorage.getItem("neurondeck-theme") as "dark" | "light" | null) ?? "light",
   );
   const abortRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -127,6 +125,11 @@ function App() {
         const conversations = saved.conversations.map((conversation) => ({
           ...conversation,
           modelId: validIds.has(conversation.modelId) ? conversation.modelId : DEFAULT_MODEL_ID,
+          systemPrompt:
+            conversation.systemPrompt === translations.zh.defaultSystemPrompt ||
+            conversation.systemPrompt === translations.en.defaultSystemPrompt
+              ? translations[language].defaultSystemPrompt
+              : conversation.systemPrompt,
         }));
         setWorkspace({ ...saved, conversations });
       }
@@ -138,6 +141,20 @@ function App() {
   }, []);
 
   useEffect(() => {
+    setWorkspace((current) => ({
+      ...current,
+      conversations: current.conversations.map((conversation) => ({
+        ...conversation,
+        systemPrompt:
+          conversation.systemPrompt === translations.zh.defaultSystemPrompt ||
+          conversation.systemPrompt === translations.en.defaultSystemPrompt
+            ? translations[language].defaultSystemPrompt
+            : conversation.systemPrompt,
+      })),
+    }));
+  }, [language]);
+
+  useEffect(() => {
     if (!hydrated) return;
     const timeout = window.setTimeout(() => void saveWorkspace(workspace), 250);
     return () => window.clearTimeout(timeout);
@@ -145,13 +162,22 @@ function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
+    document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.setAttribute(
+      "content",
+      theme === "dark" ? "#090c10" : "#f4f3ef",
+    );
     localStorage.setItem("neurondeck-theme", theme);
   }, [theme]);
 
   useEffect(() => {
+    document.documentElement.lang = t.htmlLang;
+    localStorage.setItem("neurondeck-language", language);
+  }, [language, t.htmlLang]);
+
+  useEffect(() => {
     void fetch("/api/models")
       .then(async (response) => {
-        if (!response.ok) throw new Error("Model catalog unavailable");
+        if (!response.ok) throw new Error(t.modelCatalogUnavailable);
         return response.json() as Promise<{ models: ModelInfo[]; syncedAt: string }>;
       })
       .then((data) => {
@@ -163,7 +189,7 @@ function App() {
       .catch(() => {
         // The committed catalog keeps local development and transient outages usable.
       });
-  }, []);
+  }, [t.modelCatalogUnavailable]);
 
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
@@ -226,6 +252,7 @@ function App() {
           headers: {
             "content-type": "application/json",
             "x-neurondeck-client": getClientId(),
+            "accept-language": language === "zh" ? "zh-CN" : "en",
           },
           body: JSON.stringify({
             model: conversation.modelId,
@@ -237,12 +264,18 @@ function App() {
         });
 
         if (!response.ok) {
-          const data = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
-          throw new Error(data?.error?.message || `Request failed with status ${response.status}.`);
+          const data = (await response.json().catch(() => null)) as
+            | { error?: { code?: string; message?: string } }
+            | null;
+          throw new Error(
+            getLocalizedError(language, data?.error?.code, data?.error?.message || t.requestFailed(response.status)),
+          );
         }
 
         await consumeChatStream(response, (event) => {
-          if (event.error) throw new Error(event.error);
+          if (event.error) {
+            throw new Error(language === "zh" ? t.errors.inference_failed : event.error);
+          }
           if (event.content) content += event.content;
           if (event.reasoning) reasoning += event.reasoning;
           if (event.content || event.reasoning) {
@@ -257,7 +290,7 @@ function App() {
 
         updateMessage(conversation.id, assistantId, (message) => ({
           ...message,
-          content: content || "The model completed without returning text.",
+          content: content || t.emptyCompletion,
           reasoning,
           status: "complete",
           elapsedMs: Math.round(performance.now() - startedAt),
@@ -265,10 +298,10 @@ function App() {
       } catch (error) {
         const stopped = error instanceof DOMException && error.name === "AbortError";
         const message = stopped
-          ? content || "Generation stopped."
+          ? content || t.generationStopped
           : error instanceof Error
             ? error.message
-            : "The model could not complete this request.";
+            : t.generationFailed;
         updateMessage(conversation.id, assistantId, (current) => ({
           ...current,
           content: message,
@@ -281,7 +314,7 @@ function App() {
         setGenerating(false);
       }
     },
-    [updateMessage],
+    [language, t.emptyCompletion, t.generationFailed, t.generationStopped, t.requestFailed, updateMessage],
   );
 
   const sendMessage = useCallback(async () => {
@@ -363,7 +396,7 @@ function App() {
   };
 
   const newConversation = () => {
-    const conversation = createConversation(activeConversation.modelId);
+    const conversation = createConversation(language, activeConversation.modelId);
     setWorkspace((current) => ({
       ...current,
       conversations: [conversation, ...current.conversations],
@@ -385,19 +418,24 @@ function App() {
             current.activeConversationId === conversationId ? remaining[0].id : current.activeConversationId,
         };
       }
-      const replacement = createConversation();
+      const replacement = createConversation(language);
       return { ...current, conversations: [replacement], activeConversationId: replacement.id };
     });
   };
 
   const exportConversation = () => {
+    const exportedTitle =
+      activeConversation.title === translations.zh.defaultConversation ||
+      activeConversation.title === translations.en.defaultConversation
+        ? t.defaultConversation
+        : activeConversation.title;
     const markdown = [
-      `# ${activeConversation.title}`,
+      `# ${exportedTitle}`,
       "",
-      `Model: ${activeModel.name} (${activeModel.id})`,
+      `${t.modelLabel}: ${activeModel.name} (${activeModel.id})`,
       "",
       ...activeConversation.messages.flatMap((message) => [
-        `## ${message.role === "user" ? "You" : activeModel.name}`,
+        `## ${message.role === "user" ? t.exportYou : activeModel.name}`,
         "",
         message.content,
         "",
@@ -406,7 +444,7 @@ function App() {
     const url = URL.createObjectURL(new Blob([markdown], { type: "text/markdown" }));
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `${activeConversation.title.replace(/[^a-z0-9]+/gi, "-").toLowerCase() || "conversation"}.md`;
+    anchor.download = `${exportedTitle.replace(/[^\p{L}\p{N}]+/gu, "-").toLowerCase() || "conversation"}.md`;
     anchor.click();
     URL.revokeObjectURL(url);
   };
@@ -429,30 +467,34 @@ function App() {
     () => [...workspace.conversations].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
     [workspace.conversations],
   );
+  const conversationTitle = (title: string) =>
+    title === translations.zh.defaultConversation || title === translations.en.defaultConversation
+      ? t.defaultConversation
+      : title;
 
   return (
     <div className="app-shell">
-      {sidebarOpen && <button className="mobile-scrim" aria-label="Close sidebar" onClick={() => setSidebarOpen(false)} />}
+      {sidebarOpen && <button className="mobile-scrim" aria-label={t.closeSidebar} onClick={() => setSidebarOpen(false)} />}
       <aside className={sidebarOpen ? "sidebar open" : "sidebar"}>
         <div className="brand-row">
           <div className="brand-mark"><span /><span /><span /></div>
           <div className="brand-copy">
             <strong>NeuronDeck</strong>
-            <span>Edge model workspace</span>
+            <span>{t.brandSubtitle}</span>
           </div>
-          <button className="icon-button sidebar-close" onClick={() => setSidebarOpen(false)} aria-label="Close sidebar">
+          <button className="icon-button sidebar-close" onClick={() => setSidebarOpen(false)} aria-label={t.closeSidebar}>
             <X size={18} />
           </button>
         </div>
 
         <button className="new-chat-button" onClick={newConversation} type="button">
           <Plus size={17} />
-          New conversation
+          {t.newConversation}
           <span>⌘ N</span>
         </button>
 
-        <div className="sidebar-label"><MessageSquareText size={13} />Conversations</div>
-        <nav className="conversation-list" aria-label="Conversations">
+        <div className="sidebar-label"><MessageSquareText size={13} />{t.conversations}</div>
+        <nav className="conversation-list" aria-label={t.conversations}>
           {groupedConversations.map((conversation) => (
             <button
               key={conversation.id}
@@ -463,13 +505,13 @@ function App() {
                 setSidebarOpen(false);
               }}
             >
-              <span className="conversation-title">{conversation.title}</span>
+              <span className="conversation-title">{conversationTitle(conversation.title)}</span>
               <span className="conversation-meta">
                 {getModel(models, conversation.modelId).name}
                 <Trash2
                   size={14}
                   role="button"
-                  aria-label={`Delete ${conversation.title}`}
+                  aria-label={`${t.deleteConversation}：${conversationTitle(conversation.title)}`}
                   onClick={(event) => {
                     event.stopPropagation();
                     deleteConversation(conversation.id);
@@ -483,17 +525,17 @@ function App() {
         <div className="sidebar-footer">
           <div className="storage-card">
             <Archive size={16} />
-            <div><strong>Local-first</strong><span>Chats stay in this browser</span></div>
+            <div><strong>{t.localFirst}</strong><span>{t.localFirstDetail}</span></div>
           </div>
           <button className="sidebar-action" onClick={exportConversation} type="button">
-            <Download size={16} />Export conversation
+            <Download size={16} />{t.exportConversation}
           </button>
         </div>
       </aside>
 
       <main className="main-panel">
         <header className="topbar">
-          <button className="icon-button mobile-menu" onClick={() => setSidebarOpen(true)} aria-label="Open sidebar">
+          <button className="icon-button mobile-menu" onClick={() => setSidebarOpen(true)} aria-label={t.openSidebar}>
             <Menu size={20} />
           </button>
           <button className="model-trigger" onClick={() => setModelPickerOpen(true)} type="button">
@@ -503,9 +545,19 @@ function App() {
           </button>
           <div className="topbar-actions">
             <button
+              className="language-toggle"
+              onClick={() => setLanguage((current) => (current === "zh" ? "en" : "zh"))}
+              aria-label={t.switchLanguage}
+              title={t.switchLanguage}
+              type="button"
+            >
+              <Languages size={16} />
+              <span>{t.languageName}</span>
+            </button>
+            <button
               className="icon-button"
               onClick={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
-              aria-label="Toggle theme"
+              aria-label={t.toggleTheme}
               type="button"
             >
               {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
@@ -513,7 +565,7 @@ function App() {
             <button
               className={inspectorOpen ? "icon-button active" : "icon-button"}
               onClick={() => setInspectorOpen((current) => !current)}
-              aria-label="Toggle model inspector"
+              aria-label={t.toggleInspector}
               type="button"
             >
               <PanelRight size={18} />
@@ -527,11 +579,11 @@ function App() {
               {activeConversation.messages.length === 0 ? (
                 <div className="welcome-state">
                   <div className="welcome-orbit"><span /><span /><span /></div>
-                  <span className="eyebrow">Every Cloudflare-hosted chat model</span>
-                  <h1>What are we working on?</h1>
-                  <p>Switch models without switching context. Your conversations remain on this device.</p>
+                  <span className="eyebrow">{t.welcomeEyebrow}</span>
+                  <h1>{t.welcomeTitle}</h1>
+                  <p>{t.welcomeDescription}</p>
                   <div className="starter-grid">
-                    {starterPrompts.map((item) => (
+                    {t.starterPrompts.map((item) => (
                       <button key={item.label} type="button" onClick={() => {
                         setComposer(item.prompt);
                         textareaRef.current?.focus();
@@ -554,20 +606,20 @@ function App() {
                           <div className="avatar ai-avatar"><span /></div>
                         )}
                         <div>
-                          <strong>{message.role === "user" ? "You" : getModel(models, message.modelId ?? activeModel.id).name}</strong>
-                          <span>{message.elapsedMs ? `${(message.elapsedMs / 1000).toFixed(1)}s` : message.status === "streaming" ? "Generating" : ""}</span>
+                          <strong>{message.role === "user" ? t.you : getModel(models, message.modelId ?? activeModel.id).name}</strong>
+                          <span>{message.elapsedMs ? `${(message.elapsedMs / 1000).toFixed(1)}s` : message.status === "streaming" ? t.generating : ""}</span>
                         </div>
                       </div>
                       <div className={message.status === "error" ? "message-content error" : "message-content"}>
                         {message.reasoning && (
                           <details className="reasoning-block">
-                            <summary>Reasoning trace</summary>
+                            <summary>{t.reasoningTrace}</summary>
                             <p>{message.reasoning}</p>
                           </details>
                         )}
                         {message.content ? (
                           <Suspense fallback={<p>{message.content}</p>}>
-                            <MarkdownMessage content={message.content} />
+                            <MarkdownMessage content={message.content} language={language} />
                           </Suspense>
                         ) : <div className="typing"><span /><span /><span /></div>}
                       </div>
@@ -575,12 +627,12 @@ function App() {
                         <div className="message-actions">
                           <button onClick={() => void copyMessage(message)} type="button">
                             {copiedMessageId === message.id ? <Check size={14} /> : <Copy size={14} />}
-                            {copiedMessageId === message.id ? "Copied" : "Copy"}
+                            {copiedMessageId === message.id ? t.copied : t.copy}
                           </button>
                           {message.role === "assistant" ? (
-                            <button onClick={() => regenerate(message.id)} type="button"><RefreshCw size={14} />Regenerate</button>
+                            <button onClick={() => regenerate(message.id)} type="button"><RefreshCw size={14} />{t.regenerate}</button>
                           ) : (
-                            <button onClick={() => editMessage(message.id)} type="button"><Pencil size={14} />Edit from here</button>
+                            <button onClick={() => editMessage(message.id)} type="button"><Pencil size={14} />{t.editFromHere}</button>
                           )}
                         </div>
                       )}
@@ -604,39 +656,39 @@ function App() {
                       void sendMessage();
                     }
                   }}
-                  placeholder={`Message ${activeModel.name}`}
-                  aria-label="Message"
+                  placeholder={t.messageModel(activeModel.name)}
+                  aria-label={t.messageAria}
                   disabled={generating}
                 />
                 <div className="composer-bottom">
                   <div className="composer-badges">
                     <button onClick={() => setModelPickerOpen(true)} type="button"><span className="model-dot" />{activeModel.name}</button>
-                    <span>{formatContextWindow(activeModel.contextWindow)}</span>
+                    <span>{formatContextWindow(activeModel.contextWindow, language)}</span>
                   </div>
                   {generating ? (
-                    <button className="send-button stop" onClick={() => abortRef.current?.abort()} type="button" aria-label="Stop generating"><Square size={15} fill="currentColor" /></button>
+                    <button className="send-button stop" onClick={() => abortRef.current?.abort()} type="button" aria-label={t.stopGenerating}><Square size={15} fill="currentColor" /></button>
                   ) : (
-                    <button className="send-button" onClick={() => void sendMessage()} disabled={!composer.trim()} type="button" aria-label="Send message"><Send size={17} /></button>
+                    <button className="send-button" onClick={() => void sendMessage()} disabled={!composer.trim()} type="button" aria-label={t.sendMessage}><Send size={17} /></button>
                   )}
                 </div>
               </div>
-              <p className="composer-note">Models can make mistakes. 10 generations per minute per visitor.</p>
+              <p className="composer-note">{t.modelCaution}</p>
             </div>
           </section>
 
           <aside className={inspectorOpen ? "inspector open" : "inspector"}>
             <div className="inspector-header">
-              <div><span className="eyebrow">Model inspector</span><h2>{activeModel.name}</h2></div>
-              <button className="icon-button" onClick={() => setInspectorOpen(false)} aria-label="Close inspector"><X size={17} /></button>
+              <div><span className="eyebrow">{t.modelInspector}</span><h2>{activeModel.name}</h2></div>
+              <button className="icon-button" onClick={() => setInspectorOpen(false)} aria-label={t.closeInspector}><X size={17} /></button>
             </div>
-            <p className="inspector-description">{activeModel.description}</p>
+            <p className="inspector-description">{getModelDescription(activeModel, language)}</p>
             <div className="inspector-stats">
-              <div><span>Context</span><strong>{formatContextWindow(activeModel.contextWindow).replace(" context", "")}</strong></div>
-              <div><span>Input / M</span><strong>{formatPrice(activeModel.prices.input)}</strong></div>
-              <div><span>Output / M</span><strong>{formatPrice(activeModel.prices.output)}</strong></div>
+              <div><span>{t.context}</span><strong>{formatContextWindow(activeModel.contextWindow, language).replace(language === "zh" ? " 上下文" : " context", "")}</strong></div>
+              <div><span>{t.inputPerMillion}</span><strong>{formatPrice(activeModel.prices.input)}</strong></div>
+              <div><span>{t.outputPerMillion}</span><strong>{formatPrice(activeModel.prices.output)}</strong></div>
             </div>
             <div className="inspector-section">
-              <label htmlFor="system-prompt"><Settings2 size={14} />System prompt</label>
+              <label htmlFor="system-prompt"><Settings2 size={14} />{t.systemPrompt}</label>
               <textarea
                 id="system-prompt"
                 rows={6}
@@ -645,7 +697,7 @@ function App() {
               />
             </div>
             <div className="inspector-section">
-              <div className="range-label"><label htmlFor="temperature">Temperature</label><output>{activeConversation.temperature.toFixed(1)}</output></div>
+              <div className="range-label"><label htmlFor="temperature">{t.temperature}</label><output>{activeConversation.temperature.toFixed(1)}</output></div>
               <input
                 id="temperature"
                 type="range"
@@ -655,10 +707,10 @@ function App() {
                 value={activeConversation.temperature}
                 onChange={(event) => updateConversation(activeConversation.id, (conversation) => ({ ...conversation, temperature: Number(event.target.value), updatedAt: now() }))}
               />
-              <div className="range-hints"><span>Precise</span><span>Creative</span></div>
+              <div className="range-hints"><span>{t.precise}</span><span>{t.creative}</span></div>
             </div>
             <div className="inspector-section">
-              <label htmlFor="max-tokens">Maximum output tokens</label>
+              <label htmlFor="max-tokens">{t.maxOutputTokens}</label>
               <input
                 id="max-tokens"
                 className="number-input"
@@ -671,14 +723,14 @@ function App() {
               />
             </div>
             <div className="inspector-section">
-              <span className="section-title">Capabilities</span>
+              <span className="section-title">{t.capabilities}</span>
               <div className="inspector-capabilities">
-                {activeModel.capabilities.length ? activeModel.capabilities.map((capability) => <span key={capability}>{capability}</span>) : <span>text</span>}
+                {activeModel.capabilities.length ? activeModel.capabilities.map((capability) => <span key={capability}>{getCapabilityLabel(capability, language)}</span>) : <span>{t.text}</span>}
                 {activeModel.lora && <span>LoRA</span>}
-                {activeModel.paid && <span className="paid">paid</span>}
+                {activeModel.paid && <span className="paid">{t.paid}</span>}
               </div>
             </div>
-            <button className="change-model" onClick={() => setModelPickerOpen(true)} type="button">Browse all {models.length} models<ChevronDown size={15} /></button>
+            <button className="change-model" onClick={() => setModelPickerOpen(true)} type="button">{t.browseAllModels(models.length)}<ChevronDown size={15} /></button>
           </aside>
         </div>
       </main>
@@ -690,6 +742,7 @@ function App() {
             selectedId={activeConversation.modelId}
             favoriteIds={workspace.favoriteModelIds}
             syncedAt={catalogSyncedAt}
+            language={language}
             onSelect={selectModel}
             onToggleFavorite={toggleFavorite}
             onClose={() => setModelPickerOpen(false)}

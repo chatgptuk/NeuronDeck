@@ -4,6 +4,7 @@ import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
+import { translations, type Language } from "../i18n";
 
 const textFromNode = (node: ReactNode): string => {
   if (typeof node === "string" || typeof node === "number") return String(node);
@@ -12,8 +13,9 @@ const textFromNode = (node: ReactNode): string => {
   return "";
 };
 
-const CodeBlock = ({ children }: { children?: ReactNode }) => {
+const CodeBlock = ({ children, language }: { children?: ReactNode; language: Language }) => {
   const [copied, setCopied] = useState(false);
+  const t = translations[language];
   const code = Children.toArray(children).map(textFromNode).join("").replace(/\n$/, "");
 
   const copy = async () => {
@@ -26,19 +28,19 @@ const CodeBlock = ({ children }: { children?: ReactNode }) => {
     <div className="code-block">
       <button className="code-copy" onClick={copy} type="button">
         {copied ? <Check size={14} /> : <Copy size={14} />}
-        {copied ? "Copied" : "Copy"}
+        {copied ? t.copied : t.copy}
       </button>
       <pre>{children}</pre>
     </div>
   );
 };
 
-export function MarkdownMessage({ content }: { content: string }) {
+export function MarkdownMessage({ content, language }: { content: string; language: Language }) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       rehypePlugins={[rehypeHighlight]}
-      components={{ pre: CodeBlock }}
+      components={{ pre: ({ children }) => <CodeBlock language={language}>{children}</CodeBlock> }}
     >
       {content}
     </ReactMarkdown>

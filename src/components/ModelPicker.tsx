@@ -11,19 +11,13 @@ import {
   X,
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { getCapabilityLabel, getModelDescription, translations, type Language } from "../i18n";
 import { formatContextWindow, formatPrice, searchModels } from "../lib/models";
 import type { ModelInfo } from "../types";
 
 type Filter = "all" | "reasoning" | "vision" | "tools" | "paid" | "lora";
 
-const filterItems: Array<{ id: Filter; label: string }> = [
-  { id: "all", label: "All" },
-  { id: "reasoning", label: "Reasoning" },
-  { id: "vision", label: "Vision" },
-  { id: "tools", label: "Tools" },
-  { id: "paid", label: "Paid" },
-  { id: "lora", label: "LoRA" },
-];
+const filterItems: Filter[] = ["all", "reasoning", "vision", "tools", "paid", "lora"];
 
 const capabilityIcon = {
   reasoning: BrainCircuit,
@@ -37,6 +31,7 @@ interface ModelPickerProps {
   selectedId: string;
   favoriteIds: string[];
   syncedAt: string;
+  language: Language;
   onSelect: (id: string) => void;
   onToggleFavorite: (id: string) => void;
   onClose: () => void;
@@ -47,24 +42,30 @@ export function ModelPicker({
   selectedId,
   favoriteIds,
   syncedAt,
+  language,
   onSelect,
   onToggleFavorite,
   onClose,
 }: ModelPickerProps) {
+  const t = translations[language].picker;
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const visibleModels = useMemo(() => {
-    const filtered = searchModels(models, query, filter);
+    const localizedModels = models.map((model) => ({
+      ...model,
+      description: getModelDescription(model, language),
+    }));
+    const filtered = searchModels(localizedModels, query, filter);
     return [...filtered].sort((a, b) => {
       const favoriteDifference = Number(favoriteIds.includes(b.id)) - Number(favoriteIds.includes(a.id));
       return favoriteDifference || a.provider.localeCompare(b.provider) || a.name.localeCompare(b.name);
     });
-  }, [models, query, filter, favoriteIds]);
+  }, [models, query, filter, favoriteIds, language]);
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <section
-        aria-label="Choose a model"
+        aria-label={t.dialogLabel}
         aria-modal="true"
         className="model-picker"
         role="dialog"
@@ -72,10 +73,10 @@ export function ModelPicker({
       >
         <header className="picker-header">
           <div>
-            <span className="eyebrow">Cloudflare-hosted</span>
-            <h2>Choose your model</h2>
+            <span className="eyebrow">{t.eyebrow}</span>
+            <h2>{t.title}</h2>
           </div>
-          <button className="icon-button" onClick={onClose} type="button" aria-label="Close model picker">
+          <button className="icon-button" onClick={onClose} type="button" aria-label={t.close}>
             <X size={19} />
           </button>
         </header>
@@ -86,21 +87,21 @@ export function ModelPicker({
             autoFocus
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search models, providers or capabilities"
-            aria-label="Search models"
+            placeholder={t.searchPlaceholder}
+            aria-label={t.searchAria}
           />
           <kbd>⌘ K</kbd>
         </div>
 
-        <div className="filter-row" aria-label="Model filters">
+        <div className="filter-row" aria-label={t.filtersAria}>
           {filterItems.map((item) => (
             <button
-              className={filter === item.id ? "filter-pill active" : "filter-pill"}
-              key={item.id}
-              onClick={() => setFilter(item.id)}
+              className={filter === item ? "filter-pill active" : "filter-pill"}
+              key={item}
+              onClick={() => setFilter(item)}
               type="button"
             >
-              {item.label}
+              {t.filters[item]}
             </button>
           ))}
         </div>
@@ -125,24 +126,24 @@ export function ModelPicker({
                     event.stopPropagation();
                     onToggleFavorite(model.id);
                   }}
-                  aria-label={favoriteIds.includes(model.id) ? "Remove from favorites" : "Add to favorites"}
+                  aria-label={favoriteIds.includes(model.id) ? t.removeFavorite : t.addFavorite}
                 >
                   <Star size={16} fill={favoriteIds.includes(model.id) ? "currentColor" : "none"} />
                 </button>
               </div>
-              <p>{model.description}</p>
+              <p>{getModelDescription(model, language)}</p>
               <div className="capability-row">
-                <span className="capability"><Sparkles size={13} />{formatContextWindow(model.contextWindow)}</span>
+                <span className="capability"><Sparkles size={13} />{formatContextWindow(model.contextWindow, language)}</span>
                 {model.capabilities.map((capability) => {
                   const Icon = capabilityIcon[capability];
-                  return <span className="capability" key={capability}><Icon size={13} />{capability}</span>;
+                  return <span className="capability" key={capability}><Icon size={13} />{getCapabilityLabel(capability, language)}</span>;
                 })}
-                {model.paid && <span className="capability paid"><Coins size={13} />paid</span>}
+                {model.paid && <span className="capability paid"><Coins size={13} />{translations[language].paid}</span>}
                 {model.lora && <span className="capability">LoRA</span>}
               </div>
               <div className="price-row">
-                <span>In {formatPrice(model.prices.input)} / M</span>
-                <span>Out {formatPrice(model.prices.output)} / M</span>
+                <span>{t.input} {formatPrice(model.prices.input)} / M</span>
+                <span>{t.output} {formatPrice(model.prices.output)} / M</span>
                 {selectedId === model.id && <Check className="selected-check" size={17} />}
               </div>
             </article>
@@ -150,14 +151,14 @@ export function ModelPicker({
           {visibleModels.length === 0 && (
             <div className="empty-results">
               <Search size={22} />
-              <p>No models match this search.</p>
+              <p>{t.noResults}</p>
             </div>
           )}
         </div>
 
         <footer className="picker-footer">
-          <span>{visibleModels.length} of {models.length} chat models</span>
-          <span>Catalog synced {new Date(syncedAt).toLocaleDateString()}</span>
+          <span>{t.modelCount(visibleModels.length, models.length)}</span>
+          <span>{t.catalogSynced(new Date(syncedAt).toLocaleDateString(language === "zh" ? "zh-CN" : "en"))}</span>
         </footer>
       </section>
     </div>

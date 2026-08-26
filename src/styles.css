@@ -1,27 +1,8 @@
 :root {
-  color-scheme: dark;
+  color-scheme: light;
   font-family: "Avenir Next", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  --bg: #090c10;
-  --panel: #0d1117;
-  --panel-raised: #121821;
-  --panel-soft: #10151c;
-  --line: rgba(255, 255, 255, 0.085);
-  --line-strong: rgba(255, 255, 255, 0.14);
-  --text: #eef2f5;
-  --muted: #87919e;
-  --muted-strong: #aab3be;
-  --accent: #67e8d3;
-  --accent-bright: #a7fff1;
-  --accent-soft: rgba(103, 232, 211, 0.12);
-  --amber: #e8b96a;
-  --danger: #ff7f7f;
-  --shadow: 0 28px 80px rgba(0, 0, 0, 0.45);
-}
-
-:root[data-theme="light"] {
-  color-scheme: light;
   --bg: #f4f3ef;
   --panel: #faf9f6;
   --panel-raised: #ffffff;
@@ -37,6 +18,25 @@
   --amber: #9b6b1e;
   --danger: #c74141;
   --shadow: 0 28px 80px rgba(40, 48, 52, 0.18);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #090c10;
+  --panel: #0d1117;
+  --panel-raised: #121821;
+  --panel-soft: #10151c;
+  --line: rgba(255, 255, 255, 0.085);
+  --line-strong: rgba(255, 255, 255, 0.14);
+  --text: #eef2f5;
+  --muted: #87919e;
+  --muted-strong: #aab3be;
+  --accent: #67e8d3;
+  --accent-bright: #a7fff1;
+  --accent-soft: rgba(103, 232, 211, 0.12);
+  --amber: #e8b96a;
+  --danger: #ff7f7f;
+  --shadow: 0 28px 80px rgba(0, 0, 0, 0.45);
 }
 
 * {
@@ -387,8 +387,29 @@ input:focus-visible {
 
 .topbar-actions {
   display: flex;
+  align-items: center;
   gap: 3px;
   margin-left: auto;
+}
+
+.language-toggle {
+  display: inline-flex;
+  height: 34px;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  padding: 0 8px;
+  color: var(--muted-strong);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.language-toggle:hover {
+  border-color: var(--line);
+  background: var(--panel-soft);
+  color: var(--text);
 }
 
 .workspace-row {
@@ -1271,6 +1292,8 @@ input:focus-visible {
   .model-trigger { min-width: 0; padding-right: 5px; }
   .model-trigger > span:nth-child(2) { max-width: 116px; font-size: 10px; }
   .topbar-actions { gap: 0; }
+  .language-toggle { width: 36px; justify-content: center; padding: 0; }
+  .language-toggle span { display: none; }
   .inspector { top: 57px; }
   .inspector.open { width: min(100%, 340px); }
   .welcome-state h1 { font-size: 29px; }

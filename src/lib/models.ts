@@ -1,4 +1,5 @@
 import catalog from "../data/models.generated.json";
+import type { Language } from "../i18n";
 import type { ModelInfo } from "../types";
 
 export const FALLBACK_MODELS = catalog.models as ModelInfo[];
@@ -8,13 +9,16 @@ export const DEFAULT_MODEL_ID = "@cf/zai-org/glm-4.7-flash";
 export const getModel = (models: ModelInfo[], id: string): ModelInfo =>
   models.find((model) => model.id === id) ?? models[0] ?? FALLBACK_MODELS[0];
 
-export const formatContextWindow = (tokens: number): string => {
-  if (!tokens) return "Context n/a";
+export const formatContextWindow = (tokens: number, language: Language = "en"): string => {
+  if (!tokens) return language === "zh" ? "上下文未知" : "Context n/a";
+  let value: string;
   if (tokens >= 1_000_000) {
     const millions = tokens / 1_000_000;
-    return `${Number.isInteger(millions) ? millions : millions.toFixed(1)}M context`;
+    value = `${Number.isInteger(millions) ? millions : millions.toFixed(1)}M`;
+  } else {
+    value = `${Math.round(tokens / 1000)}K`;
   }
-  return `${Math.round(tokens / 1000)}K context`;
+  return `${value}${language === "zh" ? " 上下文" : " context"}`;
 };
 
 export const formatPrice = (price?: number): string =>
