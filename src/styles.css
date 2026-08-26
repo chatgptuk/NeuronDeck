@@ -1048,6 +1048,7 @@ input:focus-visible {
 .model-picker {
   display: flex;
   width: min(940px, 100%);
+  height: min(790px, calc(100dvh - 48px));
   max-height: min(790px, calc(100dvh - 48px));
   flex-direction: column;
   border: 1px solid var(--line-strong);
@@ -1059,6 +1060,7 @@ input:focus-visible {
 
 .picker-header {
   display: flex;
+  flex: 0 0 auto;
   align-items: flex-start;
   padding: 22px 23px 15px;
 }
@@ -1068,6 +1070,7 @@ input:focus-visible {
 
 .model-search {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 10px;
   margin: 0 23px;
@@ -1085,19 +1088,27 @@ input:focus-visible {
 
 .filter-row {
   display: flex;
+  flex: 0 0 auto;
+  align-items: center;
   gap: 6px;
   padding: 12px 23px 14px;
   overflow-x: auto;
 }
 
 .filter-pill {
+  display: inline-flex;
+  min-height: 28px;
   flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: transparent;
-  padding: 6px 10px;
+  padding: 0 11px;
   color: var(--muted-strong);
   font-size: 9px;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .filter-pill:hover,
@@ -1109,7 +1120,8 @@ input:focus-visible {
 
 .model-grid {
   display: grid;
-  min-height: 180px;
+  min-height: 0;
+  flex: 1 1 auto;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 9px;
   padding: 0 23px 18px;
@@ -1221,6 +1233,7 @@ input:focus-visible {
 
 .picker-footer {
   display: flex;
+  flex: 0 0 auto;
   border-top: 1px solid var(--line);
   padding: 11px 23px;
   color: var(--muted);
@@ -1283,8 +1296,18 @@ input:focus-visible {
   .composer-wrap { width: calc(100% - 22px); }
   .composer-wrap::before { right: 0; left: 0; }
   .model-grid { grid-template-columns: 1fr; }
-  .model-picker { max-height: calc(100dvh - 20px); border-radius: 16px; }
+  .model-picker { height: calc(100dvh - 20px); max-height: calc(100dvh - 20px); border-radius: 16px; }
   .modal-backdrop { padding: 10px; }
+}
+
+@media (max-height: 420px) {
+  .modal-backdrop { padding: 8px; }
+  .model-picker { height: calc(100dvh - 16px); max-height: calc(100dvh - 16px); }
+  .picker-header { padding: 12px 16px 8px; }
+  .picker-header h2 { margin-top: 3px; font-size: 17px; }
+  .model-search { margin: 0 16px; padding: 7px 9px; }
+  .filter-row { padding: 8px 16px 10px; }
+  .picker-footer { display: none; }
 }
 
 @media (max-width: 480px) {
