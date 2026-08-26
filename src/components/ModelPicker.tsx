@@ -94,11 +94,19 @@ export function ModelPicker({
         <div className="model-search">
           <Search size={18} />
           <input
+            type="search"
+            name="model-search"
             autoFocus
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder={t.searchPlaceholder}
             aria-label={t.searchAria}
+            aria-autocomplete="none"
+            autoComplete="off"
+            data-form-type="other"
+            data-1p-ignore="true"
+            data-lpignore="true"
+            data-bwignore="true"
           />
           <kbd>⌘ K</kbd>
         </div>

@@ -1003,7 +1003,9 @@ function App() {
                   </>
                 ) : null}
                 <textarea
+                  id="chat-composer"
                   ref={textareaRef}
+                  name="chat-composer"
                   rows={1}
                   value={composer}
                   onChange={(event) => setComposer(event.target.value)}
@@ -1015,6 +1017,17 @@ function App() {
                   }}
                   placeholder={t.messageModel(activeModel.name)}
                   aria-label={t.messageAria}
+                  aria-autocomplete="none"
+                  autoComplete="off"
+                  autoCapitalize="sentences"
+                  autoCorrect="on"
+                  inputMode="text"
+                  enterKeyHint="send"
+                  spellCheck
+                  data-form-type="other"
+                  data-1p-ignore="true"
+                  data-lpignore="true"
+                  data-bwignore="true"
                   disabled={generating}
                 />
                 <div className="composer-bottom">
@@ -1075,9 +1088,16 @@ function App() {
               <label htmlFor="system-prompt"><Settings2 size={14} />{t.systemPrompt}</label>
               <textarea
                 id="system-prompt"
+                name="system-prompt"
                 rows={6}
                 value={activeConversation.systemPrompt}
                 onChange={(event) => updateConversation(activeConversation.id, (conversation) => ({ ...conversation, systemPrompt: event.target.value, updatedAt: now() }))}
+                aria-autocomplete="none"
+                autoComplete="off"
+                data-form-type="other"
+                data-1p-ignore="true"
+                data-lpignore="true"
+                data-bwignore="true"
               />
             </div>
             <div className="inspector-section">
