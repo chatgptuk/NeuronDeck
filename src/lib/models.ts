@@ -6,6 +6,12 @@ export const FALLBACK_MODELS = catalog.models as ModelInfo[];
 export const CATALOG_SYNCED_AT = catalog.syncedAt;
 export const DEFAULT_MODEL_ID = "@cf/moonshotai/kimi-k2.7-code";
 
+const DEEPSEEK_DISPLAY_ORDER = [
+  "@cf/deepseek-ai/deepseek-v4-pro-0813",
+  "@cf/deepseek-ai/deepseek-v4-flash-0731",
+  "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
+] as const;
+
 export const getModel = (models: ModelInfo[], id: string): ModelInfo =>
   models.find((model) => model.id === id) ?? models[0] ?? FALLBACK_MODELS[0];
 
@@ -31,6 +37,15 @@ export const sortModelsByPrice = (
   models: ModelInfo[],
   favoriteIds: string[] = [],
 ): ModelInfo[] => [...models].sort((a, b) => {
+  const aDeepSeekIndex = DEEPSEEK_DISPLAY_ORDER.indexOf(a.id as (typeof DEEPSEEK_DISPLAY_ORDER)[number]);
+  const bDeepSeekIndex = DEEPSEEK_DISPLAY_ORDER.indexOf(b.id as (typeof DEEPSEEK_DISPLAY_ORDER)[number]);
+  const aIsPrioritizedDeepSeek = aDeepSeekIndex >= 0;
+  const bIsPrioritizedDeepSeek = bDeepSeekIndex >= 0;
+  if (aIsPrioritizedDeepSeek || bIsPrioritizedDeepSeek) {
+    if (aIsPrioritizedDeepSeek && bIsPrioritizedDeepSeek) return aDeepSeekIndex - bDeepSeekIndex;
+    return aIsPrioritizedDeepSeek ? -1 : 1;
+  }
+
   const aHasPrice = a.prices.output != null || a.prices.input != null;
   const bHasPrice = b.prices.output != null || b.prices.input != null;
   if (aHasPrice !== bHasPrice) return Number(bHasPrice) - Number(aHasPrice);

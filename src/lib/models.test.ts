@@ -53,4 +53,12 @@ describe("Cloudflare-hosted chat catalog", () => {
       "@cf/google/gemma-2b-it-lora",
     ]);
   });
+
+  it("keeps R1 Distill behind the two current DeepSeek models", () => {
+    expect(sortModelsByPrice(FALLBACK_MODELS).slice(0, 3).map((model) => model.id)).toEqual([
+      "@cf/deepseek-ai/deepseek-v4-pro-0813",
+      "@cf/deepseek-ai/deepseek-v4-flash-0731",
+      "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
+    ]);
+  });
 });
