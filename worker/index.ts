@@ -1344,11 +1344,9 @@ const handleTts = async (request: Request, env: Env): Promise<Response> => {
       (model === TTS_MODEL_IDS.auraSpanish && language !== "es")) {
     return apiError("The selected Aura-2 model does not support this language.", 400, "invalid_tts_language");
   }
-  const input = model === TTS_MODEL_IDS.melo
-    ? { prompt: text, lang: language }
-    : model === TTS_MODEL_IDS.auraSpanish
-      ? { text, speaker: "aquila", encoding: "mp3" }
-      : { text, speaker: "luna", encoding: "mp3" };
+  const input = model === TTS_MODEL_IDS.auraSpanish
+    ? { text, speaker: "aquila", encoding: "mp3" }
+    : { text, speaker: "luna", encoding: "mp3" };
   const resolvedAi = await resolveAiForRequest(request, env);
   if (!resolvedAi.ok) return resolvedAi.response;
 

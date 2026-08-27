@@ -30,7 +30,7 @@ NeuronDeck brings Cloudflare-hosted chat models, multimodal input, image generat
 - Image input for vision models, plus PDF, Word, spreadsheet, HTML, XML, OpenDocument, and Numbers attachments
 - Markdown, GitHub-flavored tables, syntax highlighting, code copying, and rendered reasoning
 - Function Calling image generation with FLUX.2 Klein 9B, FLUX.2 Dev, Lucid Origin, and Phoenix 1.0
-- On-demand assistant read-aloud: Aura-2 for high-quality English/Spanish and MeloTTS for affordable Chinese and multilingual speech
+- On-demand assistant read-aloud: device system voices for Chinese and multilingual speech, with optional high-quality Aura-2 for English/Spanish
 - Cloudflare Workflows and R2 for long-running image jobs that can recover after backgrounding or refresh
 - Model-aware output token limits, plus per-conversation system prompts, temperature, and output controls
 - Browser-local IndexedDB history, mobile refinements, message timestamps, and generation duration

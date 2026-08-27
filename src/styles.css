@@ -508,7 +508,7 @@ input:focus-visible {
 .speech-provider-mark { display: grid; width: 38px; height: 38px; flex: 0 0 38px; place-items: center; border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--line)); border-radius: 13px 16px 13px 16px; color: white; font-family: "Iowan Old Style", Georgia, serif; font-size: 14px; font-weight: 700; }
 .speech-provider-mark svg { width: 18px; height: 18px; stroke-width: 1.7; }
 .speech-provider-mark.aura { background: linear-gradient(145deg, #263f55, #5b668c 58%, #8c7ca0); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14); }
-.speech-provider-mark.melo { background: linear-gradient(145deg, #3f7966, #74a38d); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18); }
+.speech-provider-mark.system { background: linear-gradient(145deg, #3f7966, #74a38d); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18); }
 .speech-model-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 3px; }
 .speech-model-copy strong { display: flex; min-width: 0; align-items: center; gap: 6px; color: var(--text); font-size: 9px; font-weight: 680; }
 .speech-model-copy strong em { border-radius: 999px; background: var(--accent-soft); padding: 2px 5px; color: var(--accent-bright); font-size: 6px; font-style: normal; font-weight: 650; }

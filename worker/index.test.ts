@@ -362,34 +362,12 @@ describe("speech synthesis API", () => {
     });
   });
 
-  it("decodes MeloTTS audio and forwards the detected language", async () => {
-    const run = vi.fn(async () => ({ audio: btoa(String.fromCharCode(73, 68, 51, 3)) }));
-    const response = await worker.fetch(requestForSpeech({
-      model: "@cf/myshell-ai/melotts",
-      language: "zh",
-      text: "今天来介绍 Cloudflare Workers AI。",
-    }), {
-      AI: { run, toMarkdown: vi.fn() },
-      ASSETS: { fetch: vi.fn() },
-      CHAT_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
-      TTS_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
-    } as never);
-
-    expect(response.status).toBe(200);
-    expect(response.headers.get("x-neurondeck-tts-language")).toBe("zh");
-    expect([...new Uint8Array(await response.arrayBuffer())]).toEqual([73, 68, 51, 3]);
-    expect(run).toHaveBeenCalledWith("@cf/myshell-ai/melotts", {
-      prompt: "今天来介绍 Cloudflare Workers AI。",
-      lang: "zh",
-    });
-  });
-
-  it("labels the WAV bytes returned by the live MeloTTS binding correctly", async () => {
+  it("labels WAV bytes returned by a speech binding correctly", async () => {
     const wav = Uint8Array.from([
       0x52, 0x49, 0x46, 0x46, 0x24, 0, 0, 0, 0x57, 0x41, 0x56, 0x45, 0x66, 0x6d, 0x74, 0x20,
     ]);
     const response = await worker.fetch(requestForSpeech({
-      model: "@cf/myshell-ai/melotts",
+      model: "@cf/deepgram/aura-2-en",
       language: "en",
       text: "Hello.",
     }), {
@@ -410,7 +388,7 @@ describe("speech synthesis API", () => {
       .mockRejectedValueOnce(new Error("3043: Internal server error"))
       .mockResolvedValueOnce(Uint8Array.from([73, 68, 51, 4]));
     const response = await worker.fetch(requestForSpeech({
-      model: "@cf/myshell-ai/melotts",
+      model: "@cf/deepgram/aura-2-en",
       language: "en",
       text: "Hello.",
     }), {
@@ -424,12 +402,12 @@ describe("speech synthesis API", () => {
     expect(run).toHaveBeenCalledTimes(2);
   });
 
-  it("rejects unsupported speech models before inference", async () => {
+  it("rejects the broken hosted MeloTTS model before inference", async () => {
     const run = vi.fn();
     const response = await worker.fetch(requestForSpeech({
-      model: "@cf/deepgram/aura-1",
-      language: "en",
-      text: "Hello",
+      model: "@cf/myshell-ai/melotts",
+      language: "zh",
+      text: "你好",
     }), {
       AI: { run, toMarkdown: vi.fn() },
       ASSETS: { fetch: vi.fn() },

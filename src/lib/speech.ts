@@ -3,17 +3,24 @@ export const MAX_SPEECH_CHARACTERS = 3_000;
 export const TTS_MODEL_IDS = {
   auraEnglish: "@cf/deepgram/aura-2-en",
   auraSpanish: "@cf/deepgram/aura-2-es",
-  melo: "@cf/myshell-ai/melotts",
 } as const;
 
 export type TtsModelId = typeof TTS_MODEL_IDS[keyof typeof TTS_MODEL_IDS];
-export type SpeechMode = "quality" | "economy";
+export type SpeechMode = "quality" | "device";
 export type SpeechLanguage = "en" | "es" | "fr" | "zh" | "jp" | "kr";
 
-export interface SpeechRequestSelection {
+export interface CloudflareSpeechRequestSelection {
+  source: "cloudflare";
   model: TtsModelId;
   language: SpeechLanguage;
 }
+
+export interface SystemSpeechRequestSelection {
+  source: "system";
+  language: SpeechLanguage;
+}
+
+export type SpeechRequestSelection = CloudflareSpeechRequestSelection | SystemSpeechRequestSelection;
 
 const countMatches = (value: string, pattern: RegExp): number => value.match(pattern)?.length ?? 0;
 
@@ -58,12 +65,12 @@ export const resolveSpeechRequest = (
 ): SpeechRequestSelection => {
   const language = detectSpeechLanguage(text, fallback);
   if (mode === "quality" && language === "en") {
-    return { model: TTS_MODEL_IDS.auraEnglish, language };
+    return { source: "cloudflare", model: TTS_MODEL_IDS.auraEnglish, language };
   }
   if (mode === "quality" && language === "es") {
-    return { model: TTS_MODEL_IDS.auraSpanish, language };
+    return { source: "cloudflare", model: TTS_MODEL_IDS.auraSpanish, language };
   }
-  return { model: TTS_MODEL_IDS.melo, language };
+  return { source: "system", language };
 };
 
 export const isTtsModelId = (value: unknown): value is TtsModelId =>

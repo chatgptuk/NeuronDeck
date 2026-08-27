@@ -75,6 +75,12 @@ import {
   type SpeechMode,
 } from "./lib/speech";
 import {
+  getSystemSpeechLocale,
+  selectSystemSpeechVoice,
+  splitSystemSpeechText,
+  waitForSystemSpeechVoices,
+} from "./lib/system-speech";
+import {
   DEFAULT_IMAGE_MODEL_ID,
   getImageModel,
   IMAGE_MODELS,
@@ -138,6 +144,12 @@ const STARTER_ICONS = [IdeaGlyph, CodeGlyph, PerspectiveGlyph] as const;
 interface SpeechPlayback {
   messageId: string;
   status: "loading" | "playing" | "paused";
+  source: "audio" | "system";
+}
+
+interface SystemSpeechSession {
+  messageId: string;
+  cancelled: boolean;
 }
 
 const pruneAttachmentsForRequest = (messages: ChatMessage[], modelId: string): ChatMessage[] => {
@@ -243,13 +255,14 @@ function App() {
     () => (localStorage.getItem("neurondeck-theme-v2") as "dark" | "light" | null) ?? "light",
   );
   const [speechMode, setSpeechMode] = useState<SpeechMode>(
-    () => localStorage.getItem("neurondeck-speech-mode") === "quality" ? "quality" : "economy",
+    () => localStorage.getItem("neurondeck-speech-mode") === "quality" ? "quality" : "device",
   );
   const [speechPlayback, setSpeechPlayback] = useState<SpeechPlayback | null>(null);
   const [speechError, setSpeechError] = useState<{ messageId: string; message: string } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const speechAbortRef = useRef<AbortController | null>(null);
   const speechAudioRef = useRef<HTMLAudioElement | null>(null);
+  const systemSpeechSessionRef = useRef<SystemSpeechSession | null>(null);
   const speechUrlsRef = useRef(new Map<string, string>());
   const composerEditorRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -277,6 +290,9 @@ function App() {
     speechAbortRef.current = null;
     speechAudioRef.current?.pause();
     speechAudioRef.current = null;
+    if (systemSpeechSessionRef.current) systemSpeechSessionRef.current.cancelled = true;
+    systemSpeechSessionRef.current = null;
+    window.speechSynthesis?.cancel();
     setSpeechPlayback(null);
   }, []);
 
@@ -292,6 +308,8 @@ function App() {
   useEffect(() => () => {
     speechAbortRef.current?.abort();
     speechAudioRef.current?.pause();
+    if (systemSpeechSessionRef.current) systemSpeechSessionRef.current.cancelled = true;
+    window.speechSynthesis?.cancel();
     for (const url of speechUrlsRef.current.values()) URL.revokeObjectURL(url);
     speechUrlsRef.current.clear();
   }, []);
@@ -827,18 +845,29 @@ function App() {
   const toggleSpeech = useCallback(async (message: ChatMessage) => {
     if (speechPlayback?.messageId === message.id) {
       if (speechPlayback.status === "loading") return;
+      if (speechPlayback.source === "system") {
+        if (!("speechSynthesis" in window)) return;
+        if (speechPlayback.status === "playing") {
+          window.speechSynthesis.pause();
+          setSpeechPlayback({ messageId: message.id, status: "paused", source: "system" });
+        } else {
+          window.speechSynthesis.resume();
+          setSpeechPlayback({ messageId: message.id, status: "playing", source: "system" });
+        }
+        return;
+      }
       const audio = speechAudioRef.current;
       if (!audio) return;
       if (speechPlayback.status === "playing") {
         audio.pause();
-        setSpeechPlayback({ messageId: message.id, status: "paused" });
+        setSpeechPlayback({ messageId: message.id, status: "paused", source: "audio" });
         return;
       }
       try {
         await audio.play();
-        setSpeechPlayback({ messageId: message.id, status: "playing" });
+        setSpeechPlayback({ messageId: message.id, status: "playing", source: "audio" });
       } catch {
-        setSpeechPlayback({ messageId: message.id, status: "paused" });
+        setSpeechPlayback({ messageId: message.id, status: "paused", source: "audio" });
       }
       return;
     }
@@ -852,12 +881,66 @@ function App() {
     }
 
     const selection = resolveSpeechRequest(speechMode, text, language);
+    if (selection.source === "system") {
+      if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) {
+        setSpeechError({ messageId: message.id, message: t.systemSpeechUnsupported });
+        return;
+      }
+
+      const session: SystemSpeechSession = { messageId: message.id, cancelled: false };
+      systemSpeechSessionRef.current = session;
+      setSpeechPlayback({ messageId: message.id, status: "loading", source: "system" });
+      try {
+        const voices = await waitForSystemSpeechVoices(window.speechSynthesis);
+        if (session.cancelled || systemSpeechSessionRef.current !== session) return;
+        const voice = selectSystemSpeechVoice(voices, selection.language);
+        if (!voice) throw new Error(t.systemSpeechVoiceUnavailable);
+
+        const chunks = splitSystemSpeechText(text);
+        let chunkIndex = 0;
+        const speakNext = () => {
+          if (session.cancelled || systemSpeechSessionRef.current !== session) return;
+          const chunk = chunks[chunkIndex];
+          if (!chunk) {
+            systemSpeechSessionRef.current = null;
+            setSpeechPlayback(null);
+            return;
+          }
+          chunkIndex += 1;
+          const utterance = new SpeechSynthesisUtterance(chunk);
+          utterance.lang = getSystemSpeechLocale(selection.language);
+          utterance.voice = voice;
+          utterance.rate = selection.language === "zh" ? 0.95 : 1;
+          utterance.pitch = 1;
+          utterance.onend = speakNext;
+          utterance.onerror = (event) => {
+            if (session.cancelled || systemSpeechSessionRef.current !== session || event.error === "canceled") return;
+            systemSpeechSessionRef.current = null;
+            setSpeechPlayback(null);
+            setSpeechError({ messageId: message.id, message: t.speechFailed });
+          };
+          window.speechSynthesis.speak(utterance);
+          setSpeechPlayback({ messageId: message.id, status: "playing", source: "system" });
+        };
+        speakNext();
+      } catch (error) {
+        if (session.cancelled || systemSpeechSessionRef.current !== session) return;
+        systemSpeechSessionRef.current = null;
+        setSpeechPlayback(null);
+        setSpeechError({
+          messageId: message.id,
+          message: error instanceof Error ? error.message : t.speechFailed,
+        });
+      }
+      return;
+    }
+
     const cacheKey = `${message.id}:${speechMode}:${selection.model}:${selection.language}`;
     let audioUrl = speechUrlsRef.current.get(cacheKey);
     if (!audioUrl) {
       const controller = new AbortController();
       speechAbortRef.current = controller;
-      setSpeechPlayback({ messageId: message.id, status: "loading" });
+      setSpeechPlayback({ messageId: message.id, status: "loading", source: "audio" });
       try {
         const response = await fetch("/api/tts", {
           method: "POST",
@@ -922,11 +1005,20 @@ function App() {
     };
     try {
       await audio.play();
-      setSpeechPlayback({ messageId: message.id, status: "playing" });
+      setSpeechPlayback({ messageId: message.id, status: "playing", source: "audio" });
     } catch {
-      setSpeechPlayback({ messageId: message.id, status: "paused" });
+      setSpeechPlayback({ messageId: message.id, status: "paused", source: "audio" });
     }
-  }, [language, speechMode, speechPlayback, stopSpeechPlayback, t.errors.invalid_tts_text, t.speechFailed]);
+  }, [
+    language,
+    speechMode,
+    speechPlayback,
+    stopSpeechPlayback,
+    t.errors.invalid_tts_text,
+    t.speechFailed,
+    t.systemSpeechUnsupported,
+    t.systemSpeechVoiceUnavailable,
+  ]);
 
   const handleFileSelection = async (files: FileList | null) => {
     if (!activeModelSupportsAttachments || !files?.length || attachmentBusy || generating) return;
@@ -1605,19 +1697,19 @@ function App() {
                   <span className="speech-model-check">{speechMode === "quality" ? <Check size={14} /> : null}</span>
                 </button>
                 <button
-                  className={speechMode === "economy" ? "speech-model-option selected" : "speech-model-option"}
+                  className={speechMode === "device" ? "speech-model-option selected" : "speech-model-option"}
                   type="button"
                   role="radio"
-                  aria-checked={speechMode === "economy"}
-                  onClick={() => setSpeechMode("economy")}
+                  aria-checked={speechMode === "device"}
+                  onClick={() => setSpeechMode("device")}
                 >
-                  <span className="speech-provider-mark melo">M</span>
+                  <span className="speech-provider-mark system"><Volume2 /></span>
                   <span className="speech-model-copy">
-                    <strong>{t.speechEconomy}<em>{t.speechDefault}</em></strong>
-                    <small>{t.speechEconomySummary}</small>
-                    <i>{t.speechEconomyPrice}</i>
+                    <strong>{t.speechDevice}<em>{t.speechDefault}</em></strong>
+                    <small>{t.speechDeviceSummary}</small>
+                    <i>{t.speechDevicePrice}</i>
                   </span>
-                  <span className="speech-model-check">{speechMode === "economy" ? <Check size={14} /> : null}</span>
+                  <span className="speech-model-check">{speechMode === "device" ? <Check size={14} /> : null}</span>
                 </button>
               </div>
             </div>
