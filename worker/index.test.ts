@@ -454,7 +454,10 @@ describe("agent tracing", () => {
 
     expect(new TextDecoder().decode(first.value)).toContain('"first"');
     expect(first.done).toBe(false);
-    expect(testTraceSpans.map((span) => span.name)).toEqual(["invoke_agent", "chat"]);
+    expect(testTraceSpans.map((span) => span.name)).toEqual([
+      "invoke_agent neurondeck-chat",
+      `chat ${model}`,
+    ]);
     expect(testTraceSpans.every((span) => !span.ended)).toBe(true);
 
     finishStream?.();
@@ -470,6 +473,7 @@ describe("agent tracing", () => {
     expect(testTraceSpans[1].attributes).toMatchObject({
       "gen_ai.usage.input_tokens": 3,
       "gen_ai.usage.output_tokens": 5,
+      "cloudflare.agents.usage.total_tokens": 8,
     });
   });
 });
@@ -574,7 +578,11 @@ describe("image generation function calling", () => {
     expect(body).toMatch(/"elapsedMs":\d+/);
     expect(body).toContain('"done":true');
     expect(body).not.toContain("tool_calls");
-    expect(testTraceSpans.map((span) => span.name)).toEqual(["invoke_agent", "chat", "execute_tool"]);
+    expect(testTraceSpans.map((span) => span.name)).toEqual([
+      "invoke_agent neurondeck-chat",
+      `chat ${chatModel}`,
+      "execute_tool generate_image",
+    ]);
     const invokeSpan = testTraceSpans[0];
     const chatSpan = testTraceSpans[1];
     const toolSpan = testTraceSpans[2];

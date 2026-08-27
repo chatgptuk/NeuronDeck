@@ -83,7 +83,7 @@ const convertibleExtensions = new Set([
 
 const setAgentIdentity = (
   span: Span,
-  operation: "invoke_agent" | "chat",
+  operation: "invoke_agent" | "chat" | "execute_tool",
   conversationId: string,
 ): void => {
   span.setAttributes({
@@ -93,6 +93,11 @@ const setAgentIdentity = (
     "gen_ai.conversation.id": conversationId,
     "neurondeck.payload_recording": false,
   });
+};
+
+const semanticSpanName = (operation: string, target: string): string => {
+  const candidate = `${operation} ${target}`;
+  return new TextEncoder().encode(candidate).byteLength <= 64 ? candidate : operation;
 };
 
 const setSpanOutcome = (
@@ -1057,6 +1062,12 @@ const setTokenUsage = (span: Span, usage: unknown): void => {
       : undefined;
   if (inputTokens !== undefined) span.setAttribute("gen_ai.usage.input_tokens", inputTokens);
   if (outputTokens !== undefined) span.setAttribute("gen_ai.usage.output_tokens", outputTokens);
+  const totalTokens = typeof data.total_tokens === "number"
+    ? data.total_tokens
+    : inputTokens !== undefined && outputTokens !== undefined
+      ? inputTokens + outputTokens
+      : undefined;
+  if (totalTokens !== undefined) span.setAttribute("cloudflare.agents.usage.total_tokens", totalTokens);
 };
 
 const readToolCallArray = (value: unknown, legacy: boolean): StreamingToolCallFragment[] => {
@@ -1333,9 +1344,13 @@ const handleToolChat = (
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      await tracing.enterSpan("invoke_agent", async (invokeSpan) => {
+      await tracing.enterSpan(semanticSpanName("invoke_agent", AGENT_NAME), async (invokeSpan) => {
         setAgentIdentity(invokeSpan, "invoke_agent", conversationId);
-        invokeSpan.setAttribute("gen_ai.request.model", modelId);
+        invokeSpan.setAttributes({
+          "gen_ai.provider.name": "cloudflare",
+          "gen_ai.output.type": "text",
+          "gen_ai.request.model": modelId,
+        });
       const send = (payload: unknown) => {
         if (!cancelled) controller.enqueue(encodeSse(payload));
       };
@@ -1468,9 +1483,13 @@ const handleToolChat = (
           max_tokens: maxTokens,
           stream: true,
         };
-        const toolCalls = await tracing.enterSpan("chat", async (chatSpan) => {
+        const toolCalls = await tracing.enterSpan(semanticSpanName("chat", modelId), async (chatSpan) => {
           setAgentIdentity(chatSpan, "chat", conversationId);
-          chatSpan.setAttribute("gen_ai.request.model", modelId);
+          chatSpan.setAttributes({
+            "gen_ai.provider.name": "cloudflare",
+            "gen_ai.output.type": "text",
+            "gen_ai.request.model": modelId,
+          });
           try {
             let modelResult: unknown;
             try {
@@ -1533,12 +1552,11 @@ const handleToolChat = (
           return;
         }
 
-        await tracing.enterSpan("execute_tool", async (toolSpan) => {
+        await tracing.enterSpan(semanticSpanName("execute_tool", "generate_image"), async (toolSpan) => {
+          setAgentIdentity(toolSpan, "execute_tool", conversationId);
           toolSpan.setAttributes({
-            "gen_ai.operation.name": "execute_tool",
             "gen_ai.tool.name": "generate_image",
             "gen_ai.request.model": imageModel.id,
-            "neurondeck.payload_recording": false,
           });
           try {
             await executeImageTool(imageCall.arguments);
@@ -1743,14 +1761,22 @@ const handleChat = async (request: Request, env: Env): Promise<Response> => {
   };
 
   try {
-    const result = await tracing.startActiveSpan("invoke_agent", (span) => {
+    const result = await tracing.startActiveSpan(semanticSpanName("invoke_agent", AGENT_NAME), (span) => {
       invokeSpan = span;
       setAgentIdentity(span, "invoke_agent", conversationId);
-      span.setAttribute("gen_ai.request.model", body.model as string);
-      return tracing.startActiveSpan("chat", (modelSpan) => {
+      span.setAttributes({
+        "gen_ai.provider.name": "cloudflare",
+        "gen_ai.output.type": "text",
+        "gen_ai.request.model": body.model as string,
+      });
+      return tracing.startActiveSpan(semanticSpanName("chat", body.model as string), (modelSpan) => {
         chatSpan = modelSpan;
         setAgentIdentity(modelSpan, "chat", conversationId);
-        modelSpan.setAttribute("gen_ai.request.model", body.model as string);
+        modelSpan.setAttributes({
+          "gen_ai.provider.name": "cloudflare",
+          "gen_ai.output.type": "text",
+          "gen_ai.request.model": body.model as string,
+        });
         return resolvedAi.ai.run(body.model as string, {
           ...modelInput,
           temperature,
