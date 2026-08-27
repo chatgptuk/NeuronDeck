@@ -1,9 +1,14 @@
 import type { Attachment } from "../types";
+import {
+  extractLegacyImageContext,
+  type RetainedImageContext,
+} from "./chat-context";
 
 export interface ParsedApiMessage {
   role: "system" | "user" | "assistant";
   content: string;
   attachments: Attachment[];
+  retainedImageContext?: RetainedImageContext;
 }
 
 export type AiMessage = {
@@ -40,6 +45,21 @@ const cleanName = (value: unknown): string | null => {
   return name && name.length <= 180 ? name : null;
 };
 
+const parseRetainedImageContext = (value: unknown): RetainedImageContext | undefined => {
+  if (!value || typeof value !== "object") return undefined;
+  const context = value as Record<string, unknown>;
+  const modelName = typeof context.modelName === "string" ? context.modelName.trim() : "";
+  const prompt = typeof context.prompt === "string" ? context.prompt.replace(/\s+/g, " ").trim() : "";
+  const width = context.width;
+  const height = context.height;
+  if (!modelName || modelName.length > 120 || !prompt || prompt.length > 1_200) return undefined;
+  if (!Number.isInteger(width) || !Number.isInteger(height)) return undefined;
+  if ((width as number) < 1 || (width as number) > 4_096 || (height as number) < 1 || (height as number) > 4_096) {
+    return undefined;
+  }
+  return { modelName, prompt, width: width as number, height: height as number };
+};
+
 export const parseApiMessages = (
   value: unknown,
   options: { supportsVision: boolean; maxImages: number },
@@ -56,13 +76,19 @@ export const parseApiMessages = (
 
   for (const rawMessage of value) {
     if (!rawMessage || typeof rawMessage !== "object") return { ok: false, code: "invalid_messages" };
-    const { role, content, attachments } = rawMessage as Record<string, unknown>;
+    const { role, content, attachments, retainedImageContext: rawRetainedImageContext } = rawMessage as Record<string, unknown>;
     if (!(role === "system" || role === "user" || role === "assistant")) {
       return { ok: false, code: "invalid_messages" };
     }
     if (typeof content !== "string" || !content.trim() || content.length > 32_000) {
       return { ok: false, code: "invalid_messages" };
     }
+    const legacy = role === "assistant" ? extractLegacyImageContext(content) : { content };
+    const retainedImageContext = role === "assistant"
+      ? parseRetainedImageContext(rawRetainedImageContext) ?? legacy.retainedImageContext
+      : undefined;
+    const visibleContent = legacy.content || (retainedImageContext ? "A previous image was generated." : "");
+    if (!visibleContent) return { ok: false, code: "invalid_messages" };
 
     const rawAttachments = attachments == null ? [] : attachments;
     if (!Array.isArray(rawAttachments) || rawAttachments.length > MAX_ATTACHMENTS_PER_MESSAGE) {
@@ -118,14 +144,19 @@ export const parseApiMessages = (
       }
     }
 
-    totalCharacters += content.length;
+    totalCharacters += visibleContent.length + (retainedImageContext?.prompt.length ?? 0);
     totalAttachments += parsedAttachments.length;
     if (totalCharacters > MAX_TOTAL_CHARACTERS) return { ok: false, code: "invalid_messages" };
     if (totalAttachments > MAX_TOTAL_ATTACHMENTS) return { ok: false, code: "too_many_attachments" };
     if (totalImageBytes > MAX_TOTAL_IMAGE_BYTES) return { ok: false, code: "attachment_too_large" };
     if (imageCount > options.maxImages) return { ok: false, code: "too_many_images" };
 
-    parsed.push({ role, content, attachments: parsedAttachments });
+    parsed.push({
+      role,
+      content: visibleContent,
+      attachments: parsedAttachments,
+      ...(retainedImageContext ? { retainedImageContext } : {}),
+    });
   }
 
   return { ok: true, messages: parsed, imageCount };
@@ -137,9 +168,11 @@ const documentContext = (attachment: Attachment): string =>
 export const buildAiMessages = (
   messages: ParsedApiMessage[],
   legacyTopLevelImage: boolean,
-): { messages: AiMessage[]; image?: string } => {
+): { messages: AiMessage[]; image?: string; retainedImageContext?: RetainedImageContext } => {
   let topLevelImage: string | undefined;
+  let retainedImageContext: RetainedImageContext | undefined;
   const aiMessages = messages.map((message): AiMessage => {
+    if (message.retainedImageContext) retainedImageContext = message.retainedImageContext;
     const files = message.attachments.filter((attachment) => attachment.kind === "file");
     const images = message.attachments.filter((attachment) => attachment.kind === "image");
     const text = `${message.content}${files.map(documentContext).join("")}`;
@@ -162,5 +195,9 @@ export const buildAiMessages = (
     };
   });
 
-  return { messages: aiMessages, ...(topLevelImage ? { image: topLevelImage } : {}) };
+  return {
+    messages: aiMessages,
+    ...(topLevelImage ? { image: topLevelImage } : {}),
+    ...(retainedImageContext ? { retainedImageContext } : {}),
+  };
 };

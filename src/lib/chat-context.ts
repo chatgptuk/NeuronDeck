@@ -1,19 +1,59 @@
 import type { ChatMessage } from "../types";
 
 const MAX_RETAINED_IMAGE_PROMPT_LENGTH = 1_200;
+export const LEGACY_IMAGE_CONTEXT_MARKER = "[Retained image-tool context for later follow-up requests:";
+export const INTERNAL_IMAGE_CONTEXT_MARKER = "Internal application context from a successful earlier image-tool call";
 
-export const getMessageContentForRequest = (message: ChatMessage): string => {
-  if (message.role !== "assistant" || !message.generatedImages?.length) return message.content;
+export interface RetainedImageContext {
+  modelName: string;
+  prompt: string;
+  width: number;
+  height: number;
+}
+
+export const getMessageContentForRequest = (message: ChatMessage): string => message.content;
+
+export const getRetainedImageContextForRequest = (
+  message: ChatMessage,
+): RetainedImageContext | undefined => {
+  if (message.role !== "assistant" || !message.generatedImages?.length) return undefined;
 
   const image = message.generatedImages.at(-1);
-  if (!image) return message.content;
-  const prompt = image.prompt.replace(/\s+/g, " ").trim().slice(0, MAX_RETAINED_IMAGE_PROMPT_LENGTH);
-  const imageContext = [
-    "[Retained image-tool context for later follow-up requests:",
-    `a real image was generated with ${image.modelName};`,
-    `size ${image.width}x${image.height};`,
-    `generation prompt: ${prompt}]`,
-  ].join(" ");
+  if (!image) return undefined;
+  return {
+    modelName: image.modelName.slice(0, 120),
+    prompt: image.prompt.replace(/\s+/g, " ").trim().slice(0, MAX_RETAINED_IMAGE_PROMPT_LENGTH),
+    width: image.width,
+    height: image.height,
+  };
+};
 
-  return message.content ? `${message.content}\n\n${imageContext}` : imageContext;
+export const stripInternalImageContext = (content: string): string => {
+  const markerIndexes = [
+    content.indexOf(LEGACY_IMAGE_CONTEXT_MARKER),
+    content.indexOf(INTERNAL_IMAGE_CONTEXT_MARKER),
+  ].filter((index) => index >= 0);
+  const markerIndex = markerIndexes.length ? Math.min(...markerIndexes) : -1;
+  return markerIndex < 0 ? content : content.slice(0, markerIndex).trimEnd();
+};
+
+export const extractLegacyImageContext = (
+  content: string,
+): { content: string; retainedImageContext?: RetainedImageContext } => {
+  const match = content.match(
+    /\s*\[Retained image-tool context for later follow-up requests:\s*a real image was generated with (.+?);\s*size (\d+)x(\d+);\s*generation prompt:\s*([\s\S]*?)\]\s*$/,
+  );
+  if (!match) return { content };
+
+  const width = Number(match[2]);
+  const height = Number(match[3]);
+  return {
+    content: content.slice(0, match.index).trimEnd(),
+    retainedImageContext: {
+      modelName: match[1].trim().slice(0, 120),
+      prompt: match[4].replace(/\s+/g, " ").trim().slice(0, MAX_RETAINED_IMAGE_PROMPT_LENGTH),
+      width,
+      height,
+    },
+  };
 };

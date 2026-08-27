@@ -57,7 +57,11 @@ import {
 import { consumeChatStream } from "./lib/stream";
 import { loadWorkspace, saveWorkspace } from "./lib/storage";
 import { hasRenderableMessageOutput } from "./lib/message-output";
-import { getMessageContentForRequest } from "./lib/chat-context";
+import {
+  getMessageContentForRequest,
+  getRetainedImageContextForRequest,
+  stripInternalImageContext,
+} from "./lib/chat-context";
 import { isRecoverableStreamError, waitForPageVisible } from "./lib/stream-recovery";
 import { waitForImageJob } from "./lib/image-jobs";
 import { recoverInterruptedMessage } from "./lib/workspace-recovery";
@@ -299,9 +303,10 @@ function App() {
             (hasStoredTokenValue && conversation.maxTokens !== 2_048);
           return {
             ...conversation,
-            messages: conversation.messages.map((message) =>
-              recoverInterruptedMessage(message, translations[language].generationInterrupted),
-            ),
+            messages: conversation.messages.map((message) => {
+              const recovered = recoverInterruptedMessage(message, translations[language].generationInterrupted);
+              return { ...recovered, content: stripInternalImageContext(recovered.content) };
+            }),
             modelId,
             imageModelId: isImageModelId(conversation.imageModelId)
               ? conversation.imageModelId
@@ -537,11 +542,15 @@ function App() {
         ...(conversation.systemPrompt.trim()
           ? [{ role: "system" as const, content: conversation.systemPrompt.trim() }]
           : []),
-        ...requestMessages.map((message) => ({
-          role: message.role,
-          content: getMessageContentForRequest(message),
-          ...(message.attachments?.length ? { attachments: message.attachments } : {}),
-        })),
+        ...requestMessages.map((message) => {
+          const retainedImageContext = getRetainedImageContextForRequest(message);
+          return {
+            role: message.role,
+            content: getMessageContentForRequest(message),
+            ...(message.attachments?.length ? { attachments: message.attachments } : {}),
+            ...(retainedImageContext ? { retainedImageContext } : {}),
+          };
+        }),
       ];
       const requestBody = JSON.stringify({
         model: conversation.modelId,
@@ -579,7 +588,7 @@ function App() {
               if (event.error) {
                 throw new Error(language === "zh" ? t.errors.inference_failed : event.error);
               }
-              if (event.content) content += event.content;
+              if (event.content) content = stripInternalImageContext(content + event.content);
               if (event.reasoning) reasoning += event.reasoning;
               if (event.imageGeneration?.status === "generating" && event.imageGeneration.jobId) {
                 pendingImageJobId = event.imageGeneration.jobId;

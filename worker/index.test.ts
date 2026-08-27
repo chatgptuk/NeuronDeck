@@ -678,6 +678,126 @@ describe("image generation function calling", () => {
     expect(body).toContain('"generated_image"');
     expect(body).toMatch(/"elapsedMs":\d+/);
   });
+  it("treats a short second-turn subject request as a real image tool call", async () => {
+    const calls: Array<{ model: string; input: Record<string, unknown> }> = [];
+    const ai = {
+      run: vi.fn(async (model: string, input: Record<string, unknown>) => {
+        calls.push({ model, input });
+        if (model === imageModel) return { image: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB" };
+        if (input.tool_choice === "required") {
+          return {
+            choices: [{
+              message: {
+                tool_calls: [{
+                  id: "tabby-cat-image-call",
+                  type: "function",
+                  function: {
+                    name: "generate_image",
+                    arguments: JSON.stringify({
+                      prompt: "A majestic Chinese Li Hua tabby cat",
+                      aspect_ratio: "square",
+                    }),
+                  },
+                }],
+              },
+            }],
+          };
+        }
+        return new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('data: {"response":"狸花猫图片已经生成。"}\n\ndata: [DONE]\n\n'));
+            controller.close();
+          },
+        });
+      }),
+      toMarkdown: vi.fn(),
+    };
+    const env = {
+      AI: ai,
+      ASSETS: { fetch: vi.fn() },
+      CHAT_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+    };
+    const request = new Request("https://ai.chatgpt.org.uk/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "accept-language": "zh-CN",
+        "x-neurondeck-client": "test-client-1234",
+      },
+      body: JSON.stringify({
+        model: chatModel,
+        imageModel,
+        messages: [
+          { role: "user", content: "画一只可爱的猫" },
+          {
+            role: "assistant",
+            content: "上一张猫咪图片已经完成。",
+            retainedImageContext: {
+              modelName: "FLUX.2 Klein 9B",
+              prompt: "An adorable fluffy orange cat",
+              width: 1024,
+              height: 1024,
+            },
+          },
+          { role: "user", content: "我要狸花猫" },
+        ],
+      }),
+    });
+
+    const response = await worker.fetch(request, env as never);
+    const body = await response.text();
+
+    expect(calls.map((call) => call.model)).toEqual([chatModel, imageModel, chatModel]);
+    expect(calls[0].input.tool_choice).toBe("required");
+    expect(JSON.stringify(calls[0].input.messages)).toContain("An adorable fluffy orange cat");
+    expect(JSON.stringify(calls[2].input.messages)).not.toContain("Internal application context");
+    expect(JSON.stringify(calls[2].input.messages)).not.toContain("Retained image-tool context");
+    expect(body).toContain('"generated_image"');
+    expect(body).toContain("狸花猫图片已经生成。");
+  });
+  it("falls back to a server-side image call when the chat model omits required tool metadata", async () => {
+    const calls: Array<{ model: string; input: Record<string, unknown> }> = [];
+    const ai = {
+      run: vi.fn(async (model: string, input: Record<string, unknown>) => {
+        calls.push({ model, input });
+        if (model === imageModel) return { image: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB" };
+        if (input.tools) return { response: "I will make that image." };
+        return new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('data: {"response":"已真正生成。"}\n\ndata: [DONE]\n\n'));
+            controller.close();
+          },
+        });
+      }),
+      toMarkdown: vi.fn(),
+    };
+    const env = {
+      AI: ai,
+      ASSETS: { fetch: vi.fn() },
+      CHAT_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+    };
+    const request = new Request("https://ai.chatgpt.org.uk/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "accept-language": "zh-CN",
+        "x-neurondeck-client": "test-client-1234",
+      },
+      body: JSON.stringify({
+        model: chatModel,
+        imageModel,
+        messages: [{ role: "user", content: "生成一张玻璃质感的蓝色小鸟图片" }],
+      }),
+    });
+
+    const response = await worker.fetch(request, env as never);
+    const body = await response.text();
+
+    expect(calls.map((call) => call.model)).toEqual([chatModel, imageModel, chatModel]);
+    expect(calls[1].input).toHaveProperty("multipart");
+    expect(body).toContain('"generated_image"');
+    expect(body).toContain("已真正生成。");
+  });
 });
 
 describe("durable image job API", () => {

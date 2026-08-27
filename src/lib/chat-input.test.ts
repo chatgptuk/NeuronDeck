@@ -48,4 +48,49 @@ describe("multimodal chat input", () => {
     if (!result.ok) return;
     expect(buildAiMessages(result.messages, false).messages[0].content).toContain("Quarterly results");
   });
+
+  it("keeps generated-image metadata out of assistant content", () => {
+    const result = parseApiMessages([
+      { role: "user", content: "画一只猫" },
+      {
+        role: "assistant",
+        content: "图片已经完成。",
+        retainedImageContext: {
+          modelName: "FLUX.2 Dev",
+          prompt: "A fluffy orange cat",
+          width: 1024,
+          height: 1024,
+        },
+      },
+      { role: "user", content: "我要狸花猫" },
+    ], { supportsVision: false, maxImages: 0 });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const built = buildAiMessages(result.messages, false);
+    expect(built.messages[1].content).toBe("图片已经完成。");
+    expect(built.retainedImageContext).toEqual({
+      modelName: "FLUX.2 Dev",
+      prompt: "A fluffy orange cat",
+      width: 1024,
+      height: 1024,
+    });
+    expect(JSON.stringify(built.messages)).not.toContain("Retained image-tool context");
+  });
+
+  it("migrates legacy retained-image markers without exposing them to the model", () => {
+    const result = parseApiMessages([
+      {
+        role: "assistant",
+        content: "完成。\n\n[Retained image-tool context for later follow-up requests: a real image was generated with FLUX; size 768x1344; generation prompt: An autumn portrait]",
+      },
+      { role: "user", content: "再来一张" },
+    ], { supportsVision: false, maxImages: 0 });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const built = buildAiMessages(result.messages, false);
+    expect(built.messages[0].content).toBe("完成。");
+    expect(built.retainedImageContext?.prompt).toBe("An autumn portrait");
+  });
 });
