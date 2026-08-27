@@ -1,5 +1,5 @@
 {
-  "syncedAt": "2026-08-26T06:43:56.651Z",
+  "syncedAt": "2026-08-27T00:46:29.701Z",
   "source": "Cloudflare Workers AI model catalog — Text Generation, excluding safety classifiers",
   "models": [
     {
@@ -104,6 +104,25 @@
       "prices": {
         "input": 0.152,
         "output": 0.287
+      }
+    },
+    {
+      "id": "@cf/zai-org/glm-5.3-flash",
+      "name": "GLM 5.3 Flash",
+      "provider": "Z.ai",
+      "description": "The first natively multimodal model in the GLM-5 series. With 320B total parameters and just 18B active parameters, it outperforms GLM-5.2 across benchmarks and real-world workloads at one-tenth the price, while approaching Claude Opus 4.8 on coding and agentic benchmarks.",
+      "contextWindow": 1310720,
+      "capabilities": [
+        "reasoning",
+        "tools",
+        "vision"
+      ],
+      "paid": true,
+      "lora": false,
+      "prices": {
+        "input": 0.15,
+        "output": 0.5,
+        "cachedInput": 0.03
       }
     },
     {

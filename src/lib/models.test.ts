@@ -15,9 +15,14 @@ describe("Cloudflare-hosted chat catalog", () => {
   });
 
   it("contains the complete synced chat catalog without the safety classifier", () => {
-    expect(FALLBACK_MODELS).toHaveLength(28);
+    expect(FALLBACK_MODELS).toHaveLength(29);
     expect(FALLBACK_MODELS.every((model) => model.id.startsWith("@cf/"))).toBe(true);
     expect(FALLBACK_MODELS.some((model) => model.id.includes("llama-guard"))).toBe(false);
+    expect(FALLBACK_MODELS.find((model) => model.id === "@cf/zai-org/glm-5.3-flash")).toMatchObject({
+      contextWindow: 1_310_720,
+      capabilities: ["reasoning", "tools", "vision"],
+      paid: true,
+    });
   });
 
   it("finds models by provider and capability", () => {
