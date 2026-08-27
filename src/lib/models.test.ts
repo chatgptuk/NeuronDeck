@@ -68,4 +68,9 @@ describe("Cloudflare-hosted chat catalog", () => {
       "@cf/deepseek-ai/deepseek-r1-distill-qwen-32b",
     ]);
   });
+
+  it("places GLM 5.3 Flash immediately after GLM 5.2", () => {
+    const ids = sortModelsByPrice(FALLBACK_MODELS).map((model) => model.id);
+    expect(ids.indexOf("@cf/zai-org/glm-5.3-flash")).toBe(ids.indexOf("@cf/zai-org/glm-5.2") + 1);
+  });
 });

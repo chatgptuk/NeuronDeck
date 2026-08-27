@@ -38,29 +38,43 @@ export const formatPrice = (price?: number): string =>
 export const sortModelsByPrice = (
   models: ModelInfo[],
   favoriteIds: string[] = [],
-): ModelInfo[] => [...models].sort((a, b) => {
-  const aPriorityIndex = MODEL_DISPLAY_PRIORITY.indexOf(a.id as (typeof MODEL_DISPLAY_PRIORITY)[number]);
-  const bPriorityIndex = MODEL_DISPLAY_PRIORITY.indexOf(b.id as (typeof MODEL_DISPLAY_PRIORITY)[number]);
-  const aIsPrioritized = aPriorityIndex >= 0;
-  const bIsPrioritized = bPriorityIndex >= 0;
-  if (aIsPrioritized || bIsPrioritized) {
-    if (aIsPrioritized && bIsPrioritized) return aPriorityIndex - bPriorityIndex;
-    return aIsPrioritized ? -1 : 1;
+): ModelInfo[] => {
+  const sorted = [...models].sort((a, b) => {
+    const aPriorityIndex = MODEL_DISPLAY_PRIORITY.indexOf(a.id as (typeof MODEL_DISPLAY_PRIORITY)[number]);
+    const bPriorityIndex = MODEL_DISPLAY_PRIORITY.indexOf(b.id as (typeof MODEL_DISPLAY_PRIORITY)[number]);
+    const aIsPrioritized = aPriorityIndex >= 0;
+    const bIsPrioritized = bPriorityIndex >= 0;
+    if (aIsPrioritized || bIsPrioritized) {
+      if (aIsPrioritized && bIsPrioritized) return aPriorityIndex - bPriorityIndex;
+      return aIsPrioritized ? -1 : 1;
+    }
+
+    const aHasPrice = a.prices.output != null || a.prices.input != null;
+    const bHasPrice = b.prices.output != null || b.prices.input != null;
+    if (aHasPrice !== bHasPrice) return Number(bHasPrice) - Number(aHasPrice);
+
+    const outputDifference = (b.prices.output ?? -1) - (a.prices.output ?? -1);
+    if (outputDifference) return outputDifference;
+
+    const inputDifference = (b.prices.input ?? -1) - (a.prices.input ?? -1);
+    if (inputDifference) return inputDifference;
+
+    const favoriteDifference = Number(favoriteIds.includes(b.id)) - Number(favoriteIds.includes(a.id));
+    return favoriteDifference || a.provider.localeCompare(b.provider) || a.name.localeCompare(b.name);
+  });
+
+  const glm52Id = "@cf/zai-org/glm-5.2";
+  const glm53Id = "@cf/zai-org/glm-5.3-flash";
+  const glm52Index = sorted.findIndex((model) => model.id === glm52Id);
+  const glm53Index = sorted.findIndex((model) => model.id === glm53Id);
+  if (glm52Index >= 0 && glm53Index >= 0 && glm53Index !== glm52Index + 1) {
+    const [glm53] = sorted.splice(glm53Index, 1);
+    const updatedGlm52Index = sorted.findIndex((model) => model.id === glm52Id);
+    sorted.splice(updatedGlm52Index + 1, 0, glm53);
   }
 
-  const aHasPrice = a.prices.output != null || a.prices.input != null;
-  const bHasPrice = b.prices.output != null || b.prices.input != null;
-  if (aHasPrice !== bHasPrice) return Number(bHasPrice) - Number(aHasPrice);
-
-  const outputDifference = (b.prices.output ?? -1) - (a.prices.output ?? -1);
-  if (outputDifference) return outputDifference;
-
-  const inputDifference = (b.prices.input ?? -1) - (a.prices.input ?? -1);
-  if (inputDifference) return inputDifference;
-
-  const favoriteDifference = Number(favoriteIds.includes(b.id)) - Number(favoriteIds.includes(a.id));
-  return favoriteDifference || a.provider.localeCompare(b.provider) || a.name.localeCompare(b.name);
-});
+  return sorted;
+};
 
 export const searchModels = (
   models: ModelInfo[],
