@@ -4,10 +4,17 @@ import {
   MAX_SPEECH_CHARACTERS,
   prepareSpeechText,
   resolveSpeechRequest,
+  resolveStoredSpeechMode,
   TTS_MODEL_IDS,
 } from "./speech";
 
 describe("speech model selection", () => {
+  it("defaults new users to natural quality while preserving an explicit device choice", () => {
+    expect(resolveStoredSpeechMode(null)).toBe("quality");
+    expect(resolveStoredSpeechMode("quality")).toBe("quality");
+    expect(resolveStoredSpeechMode("device")).toBe("device");
+  });
+
   it("routes Chinese and mixed Chinese-English text to the device voice", () => {
     const text = "今天介绍 Cloudflare Workers AI 的语音功能。";
     expect(detectSpeechLanguage(text, "en")).toBe("zh");

@@ -9,6 +9,9 @@ export type TtsModelId = typeof TTS_MODEL_IDS[keyof typeof TTS_MODEL_IDS];
 export type SpeechMode = "quality" | "device";
 export type SpeechLanguage = "en" | "es" | "fr" | "zh" | "jp" | "kr";
 
+export const resolveStoredSpeechMode = (value: string | null): SpeechMode =>
+  value === "device" ? "device" : "quality";
+
 export interface CloudflareSpeechRequestSelection {
   source: "cloudflare";
   model: TtsModelId;

@@ -274,7 +274,8 @@ input:focus-visible {
 .message-identity { display: flex; align-items: center; gap: 10px; margin-bottom: 13px; }
 .message.user .message-identity { flex-direction: row-reverse; text-align: right; }
 .avatar { display: grid; width: 32px; height: 32px; place-items: center; border: 1px solid var(--line); border-radius: 12px; font-size: 10px; font-weight: 700; }
-.user-avatar { background: var(--accent-soft); color: var(--accent-bright); }
+.user-avatar { position: relative; border-color: color-mix(in srgb, var(--accent) 18%, var(--line)); border-radius: 50%; background: radial-gradient(circle at 31% 24%, color-mix(in srgb, white 86%, transparent) 0 8%, transparent 29%), linear-gradient(145deg, color-mix(in srgb, var(--accent-pale) 78%, var(--panel-raised)), color-mix(in srgb, var(--accent-soft) 86%, var(--panel-raised))); color: var(--accent-bright); box-shadow: 0 6px 15px rgba(48, 91, 70, 0.09), inset 0 0 0 1px color-mix(in srgb, white 32%, transparent); }
+.user-avatar svg { width: 19px; height: 19px; }
 .ai-avatar { position: relative; border-radius: 10px; background: linear-gradient(145deg, #dcece3, #c1dacd); color: var(--accent-bright); transform: rotate(-2deg); }
 .ai-avatar svg { width: 23px; height: 23px; transform: rotate(2deg); }
 .message-identity > div:last-child { display: flex; flex-direction: column; gap: 2px; }

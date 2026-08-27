@@ -24,6 +24,17 @@ export function NeuronGlyph({ className, ...props }: ProductIconProps) {
   );
 }
 
+export function UserGlyph({ className, ...props }: ProductIconProps) {
+  return (
+    <svg {...sharedProps} {...props} className={className} viewBox="0 0 24 24">
+      <path d="M4.8 10.8c.2-4.7 3.4-8 7.8-8 3.5 0 6.1 1.8 7 4.7" opacity=".34" strokeWidth="1.15" />
+      <circle cx="12" cy="8.3" r="3" strokeWidth="1.4" />
+      <path d="M6.6 19.7c.4-4.2 2.3-6.3 5.4-6.3s5 2.1 5.4 6.3" strokeWidth="1.45" />
+      <circle cx="19.2" cy="6.3" fill="currentColor" r="1.35" stroke="none" />
+    </svg>
+  );
+}
+
 export function IdeaGlyph({ className, ...props }: ProductIconProps) {
   return (
     <svg {...sharedProps} {...props} className={className} viewBox="0 0 24 24">

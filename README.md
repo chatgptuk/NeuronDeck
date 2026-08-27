@@ -30,7 +30,7 @@ NeuronDeck 把 Cloudflare 托管的对话模型、多模态输入、图片生成
 - 视觉模型支持图片输入；支持 PDF、Word、表格、HTML、XML、OpenDocument 与 Numbers 等附件
 - Markdown、GitHub 风格表格、代码高亮、代码复制与推理过程渲染
 - 通过 Function Calling 调用 FLUX.2 Klein 9B、FLUX.2 Dev、Lucid Origin 与 Phoenix 1.0 生图
-- AI 消息可按需朗读：中文与多语言使用设备系统声线，英语/西班牙语可选 Aura-2 高品质语音
+- AI 消息可按需朗读：默认自然音质优先，英语/西班牙语使用 Aura-2，中文与其他语言使用设备系统声线
 - 生图自动选择返回通道：默认直接返回浏览器；配置 R2 与 Workflows 后可承接耗时任务，并在持久化不可用时自动回退
 - 根据模型能力设置合理的最大输出 Token，并提供对话级系统提示词、温度与输出上限
 - IndexedDB 本地对话历史、移动端优化、消息时间与生成耗时

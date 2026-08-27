@@ -72,6 +72,7 @@ import { formatElapsedDuration, formatMessageTimestamp } from "./lib/time";
 import {
   prepareSpeechText,
   resolveSpeechRequest,
+  resolveStoredSpeechMode,
   type SpeechMode,
 } from "./lib/speech";
 import {
@@ -101,6 +102,7 @@ import {
   IdeaGlyph,
   NeuronGlyph,
   PerspectiveGlyph,
+  UserGlyph,
 } from "./components/ProductIcons";
 import { ProviderLogo } from "./components/ProviderLogo";
 
@@ -255,7 +257,7 @@ function App() {
     () => (localStorage.getItem("neurondeck-theme-v2") as "dark" | "light" | null) ?? "light",
   );
   const [speechMode, setSpeechMode] = useState<SpeechMode>(
-    () => localStorage.getItem("neurondeck-speech-mode") === "quality" ? "quality" : "device",
+    () => resolveStoredSpeechMode(localStorage.getItem("neurondeck-speech-mode")),
   );
   const [speechPlayback, setSpeechPlayback] = useState<SpeechPlayback | null>(null);
   const [speechError, setSpeechError] = useState<{ messageId: string; message: string } | null>(null);
@@ -1371,7 +1373,7 @@ function App() {
                     <article className={`message ${message.role}`} key={message.id}>
                       <div className="message-identity">
                         {message.role === "user" ? (
-                          <div className="avatar user-avatar">Y</div>
+                          <div className="avatar user-avatar"><UserGlyph /></div>
                         ) : (
                           <div className="avatar ai-avatar"><NeuronGlyph /></div>
                         )}
@@ -1690,7 +1692,7 @@ function App() {
                 >
                   <span className="speech-provider-mark aura"><AudioLines /></span>
                   <span className="speech-model-copy">
-                    <strong>{t.speechQuality}</strong>
+                    <strong>{t.speechQuality}<em>{t.speechDefault}</em></strong>
                     <small>{t.speechQualitySummary}</small>
                     <i>{t.speechQualityPrice}</i>
                   </span>
@@ -1705,7 +1707,7 @@ function App() {
                 >
                   <span className="speech-provider-mark system"><Volume2 /></span>
                   <span className="speech-model-copy">
-                    <strong>{t.speechDevice}<em>{t.speechDefault}</em></strong>
+                    <strong>{t.speechDevice}</strong>
                     <small>{t.speechDeviceSummary}</small>
                     <i>{t.speechDevicePrice}</i>
                   </span>
