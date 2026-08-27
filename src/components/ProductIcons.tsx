@@ -35,6 +35,16 @@ export function UserGlyph({ className, ...props }: ProductIconProps) {
   );
 }
 
+export function ChatGlyph({ className, ...props }: ProductIconProps) {
+  return (
+    <svg {...sharedProps} {...props} className={className} viewBox="0 0 24 24">
+      <path d="M4 6.4c0-1.5 1.2-2.7 2.7-2.7h10.6c1.5 0 2.7 1.2 2.7 2.7v7.1c0 1.5-1.2 2.7-2.7 2.7h-5.8L7 20v-3.8h-.3A2.7 2.7 0 0 1 4 13.5V6.4Z" strokeWidth="1.4" />
+      <path d="M8 9.9h5.4" opacity=".5" strokeWidth="1.25" />
+      <circle cx="16.6" cy="9.9" fill="currentColor" r="1.25" stroke="none" />
+    </svg>
+  );
+}
+
 export function IdeaGlyph({ className, ...props }: ProductIconProps) {
   return (
     <svg {...sharedProps} {...props} className={className} viewBox="0 0 24 24">

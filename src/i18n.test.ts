@@ -17,6 +17,15 @@ describe("Chinese localization", () => {
     expect(getLocalizedError("zh", "rate_limited", "fallback")).toBe(translations.zh.errors.rate_limited);
   });
 
+  it("offers code, image, and casual-chat starters in that order", () => {
+    expect(translations.zh.starterPrompts.map((item) => item.label)).toEqual([
+      "写一段代码",
+      "生成一张图片",
+      "随便聊聊",
+    ]);
+    expect(translations.zh.welcomeDescription).toContain("Cloudflare 自托管模型");
+  });
+
   it("keeps English available", () => {
     expect(formatContextWindow(1048576, "en")).toBe("1.0M context");
     expect(getCapabilityLabel("vision", "en")).toBe("vision");

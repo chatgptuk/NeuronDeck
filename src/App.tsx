@@ -97,11 +97,10 @@ import type { Attachment, ChatMessage, Conversation, GeneratedImage, ModelInfo, 
 import { AttachmentStrip } from "./components/AttachmentStrip";
 import { GeneratedImageGallery } from "./components/GeneratedImageGallery";
 import {
+  ChatGlyph,
   CodeGlyph,
   CreationGlyph,
-  IdeaGlyph,
   NeuronGlyph,
-  PerspectiveGlyph,
   UserGlyph,
 } from "./components/ProductIcons";
 import { ProviderLogo } from "./components/ProviderLogo";
@@ -141,7 +140,7 @@ const insertComposerText = (editor: HTMLDivElement, value: string): string => {
 };
 const LEGACY_VISION_MODEL_ID = "@cf/meta/llama-3.2-11b-vision-instruct";
 const MAX_CONTEXT_ATTACHMENTS = 8;
-const STARTER_ICONS = [IdeaGlyph, CodeGlyph, PerspectiveGlyph] as const;
+const STARTER_ICONS = [CodeGlyph, CreationGlyph, ChatGlyph] as const;
 
 interface SpeechPlayback {
   messageId: string;
