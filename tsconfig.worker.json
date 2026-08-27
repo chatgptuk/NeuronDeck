@@ -19,7 +19,6 @@
     "src/lib/image-models.ts",
     "src/lib/output-tokens.ts",
     "src/lib/speech.ts",
-    "src/test/cloudflare-workers.ts",
     "src/types.ts"
   ]
 }

@@ -175,14 +175,6 @@ wrangler deploy
 
 如需自定义域名，请复制 [`wrangler.production.example.jsonc`](./wrangler.production.example.jsonc)，填写你自己的域名与资源标识，并将真实配置保存为已被 Git 忽略的 `.wrangler.production.jsonc`。部署前请确认域名和资源都属于当前 Cloudflare 账户。
 
-## Agent Tracing
-
-项目已启用 Cloudflare Agent Tracing，并为自定义聊天调用链记录 `invoke_agent`、`chat` 与 `execute_tool` spans。部署后可在 Cloudflare Dashboard 的 **Workers & Pages → Observability → Agents** 查看每轮对话的模型耗时、工具耗时、状态与模型返回的 token 用量。
-
-Tracing 只记录随机对话 ID、模型 ID、操作类型、耗时、状态和 token 数等元数据；不会记录用户消息、系统提示词、推理内容、附件、绘图提示词、工具参数、工具结果、OAuth 信息或 API 凭证。公开配置当前使用 100% 采样，流量较大时可将 `observability.traces.head_sampling_rate` 调低，例如 `0.05` 表示采样 5% 的请求。
-
-Cloudflare 文档：[Agent tracing](https://developers.cloudflare.com/agents/runtime/operations/observability/tracing/) · [Workers custom spans](https://developers.cloudflare.com/workers/observability/traces/custom-spans/)
-
 ## 更新模型目录
 
 仓库中的模型目录是一份部署快照，因此运行时无需暴露 Cloudflare API Token。发布前可通过以下命令刷新：
