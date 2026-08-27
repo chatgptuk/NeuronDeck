@@ -755,6 +755,139 @@ describe("image generation function calling", () => {
     expect(body).toContain('"generated_image"');
     expect(body).toContain("狸花猫图片已经生成。");
   });
+  it("treats an image style change phrased with 改为 as a GLM 5.3 tool call", async () => {
+    const glm53Model = "@cf/zai-org/glm-5.3-flash";
+    const calls: Array<{ model: string; input: Record<string, unknown> }> = [];
+    const ai = {
+      run: vi.fn(async (model: string, input: Record<string, unknown>) => {
+        calls.push({ model, input });
+        if (model === imageModel) return { image: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB" };
+        if (input.tool_choice === "required") {
+          return {
+            choices: [{
+              message: {
+                tool_calls: [{
+                  id: "iphone-style-image-call",
+                  type: "function",
+                  function: {
+                    name: "generate_image",
+                    arguments: JSON.stringify({
+                      prompt: "A candid iPhone photograph of the same fluffy cat in natural light",
+                      aspect_ratio: "square",
+                    }),
+                  },
+                }],
+              },
+            }],
+          };
+        }
+        return new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('data: {"response":"已按 iPhone 拍摄风格重新生成。"}\n\ndata: [DONE]\n\n'));
+            controller.close();
+          },
+        });
+      }),
+      toMarkdown: vi.fn(),
+    };
+    const env = {
+      AI: ai,
+      ASSETS: { fetch: vi.fn() },
+      CHAT_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+    };
+    const request = new Request("https://ai.chatgpt.org.uk/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "accept-language": "zh-CN",
+        "x-neurondeck-client": "test-client-1234",
+      },
+      body: JSON.stringify({
+        model: glm53Model,
+        imageModel,
+        messages: [
+          { role: "user", content: "画一只可爱的猫" },
+          {
+            role: "assistant",
+            content: "上一张猫咪图片已经完成。",
+            retainedImageContext: {
+              modelName: "FLUX.2 Klein 9B",
+              prompt: "An adorable fluffy cat in warm sunlight",
+              width: 1024,
+              height: 1024,
+            },
+          },
+          { role: "user", content: "改为iPhone拍摄风格" },
+        ],
+      }),
+    });
+
+    const response = await worker.fetch(request, env as never);
+    const body = await response.text();
+
+    expect(calls.map((call) => call.model)).toEqual([glm53Model, imageModel, glm53Model]);
+    expect(calls[0].input.tool_choice).toBe("required");
+    expect(JSON.stringify(calls[0].input.messages)).toContain("An adorable fluffy cat in warm sunlight");
+    expect(body).toContain('"status":"generating"');
+    expect(body).toContain('"generated_image"');
+    expect(body).toContain("已按 iPhone 拍摄风格重新生成。");
+  });
+  it("keeps questions about a prior image in ordinary chat", async () => {
+    const glm53Model = "@cf/zai-org/glm-5.3-flash";
+    const calls: Array<{ model: string; input: Record<string, unknown> }> = [];
+    const ai = {
+      run: vi.fn(async (model: string, input: Record<string, unknown>) => {
+        calls.push({ model, input });
+        return new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('data: {"response":"这是自然光摄影风格。"}\n\ndata: [DONE]\n\n'));
+            controller.close();
+          },
+        });
+      }),
+      toMarkdown: vi.fn(),
+    };
+    const env = {
+      AI: ai,
+      ASSETS: { fetch: vi.fn() },
+      CHAT_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+    };
+    const request = new Request("https://ai.chatgpt.org.uk/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "accept-language": "zh-CN",
+        "x-neurondeck-client": "test-client-1234",
+      },
+      body: JSON.stringify({
+        model: glm53Model,
+        imageModel,
+        messages: [
+          { role: "user", content: "画一只可爱的猫" },
+          {
+            role: "assistant",
+            content: "上一张猫咪图片已经完成。",
+            retainedImageContext: {
+              modelName: "FLUX.2 Klein 9B",
+              prompt: "An adorable fluffy cat in warm sunlight",
+              width: 1024,
+              height: 1024,
+            },
+          },
+          { role: "user", content: "这是什么风格？" },
+        ],
+      }),
+    });
+
+    const response = await worker.fetch(request, env as never);
+    const body = await response.text();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].model).toBe(glm53Model);
+    expect(calls[0].input.tools).toBeUndefined();
+    expect(body).not.toContain('"generated_image"');
+    expect(body).toContain("这是自然光摄影风格。");
+  });
   it("falls back to a server-side image call when the chat model omits required tool metadata", async () => {
     const calls: Array<{ model: string; input: Record<string, unknown> }> = [];
     const ai = {

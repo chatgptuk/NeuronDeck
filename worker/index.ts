@@ -934,14 +934,16 @@ const hasImageGenerationIntent = (
     (englishCreate.test(priorText) && englishVisual.test(priorText)) ||
     /\b(?:image|picture|photo|illustration).{0,30}(?:generated|created|ready|complete)\b/i.test(priorText);
   const asksForVariation =
-    /(?:再来|再做|再画|再生成|重新|重做|重绘|换一|换个|另一个|变体|改成|换成|背景换|风格换)/u.test(prompt) ||
-    /\b(?:another one|one more|try again|regenerate|remake|redraw|variation|new version|change (?:it|the)|make it)\b/i.test(prompt);
+    /(?:再来|再做|再画|再生成|重新|重做|重绘|换一|换个|另一个|变体)/u.test(prompt) ||
+    /(?:改|修改|调整|切换|换|变|设|做)(?:为|成|到)/u.test(prompt) ||
+    /(?:背景|风格|色调|颜色|光线|构图|镜头|角度|服装|姿势|表情|场景|材质|画幅|比例)(?:改|换|调整)/u.test(prompt) ||
+    /\b(?:another one|one more|try again|regenerate|remake|redraw|variation|new version|make it|(?:change|modify|switch|turn)\s+(?:it|the\s+(?:image|picture|photo|style|background|color|lighting|composition|angle))\s+(?:to|into))\b/i.test(prompt);
   const rejectsShortFollowUp =
     /(?:了解|知道|介绍|解释|讲讲|信息|资料|推荐|价格|多少钱|谢谢|多谢|好了|可以了|不用了|就这样|再见)/u.test(prompt) ||
     /\b(?:learn|know|explain|describe|tell me about|information|recommend|price|cost|thanks|thank you|that is all|never mind)\b/i.test(prompt);
   const requestsImageFollowUp = !rejectsShortFollowUp && !/[?？]/u.test(prompt) && (
-    /^(?:请|麻烦)?(?:给我|帮我|替我|我(?:还)?(?:想要|要|想看)|来|换成|改成|做成|用).{1,80}$/u.test(prompt) ||
-    /^(?:please\s+)?(?:give me|show me|i (?:also )?(?:want|would like)|make it|change it to|use)\b.{1,100}$/i.test(prompt)
+    /^(?:请|麻烦)?(?:给我|帮我|替我|我(?:还)?(?:想要|要|想看)|来|(?:改|修改|调整|切换|换|变|设|做)(?:为|成|到)|用).{1,80}$/u.test(prompt) ||
+    /^(?:please\s+)?(?:give me|show me|i (?:also )?(?:want|would like)|make it|(?:change|modify|switch|turn) it (?:to|into)|use)\b.{1,100}$/i.test(prompt)
   );
   return hasPriorVisual && (asksForVariation || requestsImageFollowUp);
 };
