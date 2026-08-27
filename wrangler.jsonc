@@ -20,18 +20,6 @@
   "vars": {
     "CLOUDFLARE_OAUTH_SCOPES": "ai.read account-settings.read offline_access"
   },
-  "r2_buckets": [
-    {
-      "binding": "IMAGE_RESULTS"
-    }
-  ],
-  "workflows": [
-    {
-      "binding": "IMAGE_WORKFLOW",
-      "name": "neurondeck-image-generation",
-      "class_name": "ImageGenerationWorkflow"
-    }
-  ],
   "ratelimits": [
     {
       "name": "CHAT_RATE_LIMITER",

@@ -1,4 +1,5 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
+import { NonRetryableError } from "cloudflare:workflows";
 import {
   getOAuthSession,
   getOAuthSessionById,
@@ -41,8 +42,8 @@ interface Env extends CloudflareOAuthEnv {
   AI: unknown;
   ASSETS: Fetcher;
   CHAT_RATE_LIMITER: RateLimiter;
-  IMAGE_RESULTS: R2Bucket;
-  IMAGE_WORKFLOW: Workflow<ImageWorkflowParams>;
+  IMAGE_RESULTS?: R2Bucket;
+  IMAGE_WORKFLOW?: Workflow<ImageWorkflowParams>;
   PUBLIC_AI_ACCOUNTS?: string;
   PUBLIC_AI_RATE_LIMITER?: RateLimiter;
   TTS_RATE_LIMITER: RateLimiter;
@@ -351,6 +352,17 @@ interface ImageWorkflowOutput {
   seed: number;
   width: number;
 }
+
+const IMAGE_PERSISTENCE_UNAVAILABLE = "IMAGE_PERSISTENCE_UNAVAILABLE";
+
+const durableImageJobsAvailable = (env: Env): boolean =>
+  Boolean(env.IMAGE_RESULTS && env.IMAGE_WORKFLOW);
+
+const isImagePersistenceUnavailable = (error: unknown): boolean =>
+  error instanceof Error && error.message.includes(IMAGE_PERSISTENCE_UNAVAILABLE);
+
+const persistenceUnavailableError = (message: string): NonRetryableError =>
+  new NonRetryableError(`${IMAGE_PERSISTENCE_UNAVAILABLE}: ${message}`);
 
 const imageDimensions: Record<ImageAspectRatio, { width: number; height: number }> = {
   square: { width: 1024, height: 1024 },
@@ -666,10 +678,18 @@ export class ImageGenerationWorkflow extends WorkflowEntrypoint<Env, ImageWorkfl
         );
         const { bytes, mimeType } = await normalizeImageBytes(result);
         const objectKey = `image-jobs/${jobId}`;
-        await this.env.IMAGE_RESULTS.put(objectKey, bytes, {
-          httpMetadata: { contentType: mimeType },
-          customMetadata: { accessToken, clientId },
-        });
+        if (!this.env.IMAGE_RESULTS) {
+          throw persistenceUnavailableError("The R2 image-results binding is not configured.");
+        }
+        try {
+          await this.env.IMAGE_RESULTS.put(objectKey, bytes, {
+            httpMetadata: { contentType: mimeType },
+            customMetadata: { accessToken, clientId },
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "R2 rejected the image result.";
+          throw persistenceUnavailableError(message);
+        }
         return {
           accessToken,
           clientId,
@@ -792,6 +812,9 @@ const handleImageJobStatus = async (request: Request, env: Env, jobId: string): 
   if (!isSameOrigin(request)) return apiError("Cross-origin job access is not allowed.", 403, "origin_rejected");
   const clientId = getClientId(request);
   if (clientId === "anonymous") return apiError("A valid client id is required.", 401, "client_required");
+  if (!env.IMAGE_WORKFLOW) {
+    return apiError("Durable image jobs are not enabled for this deployment.", 503, "image_jobs_disabled");
+  }
 
   try {
     const instance = await env.IMAGE_WORKFLOW.get(jobId);
@@ -825,6 +848,9 @@ const handleImageJobStatus = async (request: Request, env: Env, jobId: string): 
 const handleImageJobResult = async (request: Request, env: Env, jobId: string): Promise<Response> => {
   const token = new URL(request.url).searchParams.get("token") ?? "";
   if (!/^[a-f0-9]{32}$/.test(token)) return apiError("A valid image token is required.", 401, "image_token_required");
+  if (!env.IMAGE_RESULTS) {
+    return apiError("Durable image results are not enabled for this deployment.", 503, "image_results_disabled");
+  }
   const object = await env.IMAGE_RESULTS.get(`image-jobs/${jobId}`);
   if (!object) return apiError("Generated image not found.", 404, "image_not_found");
   if (object.customMetadata?.accessToken !== token) {
@@ -1145,32 +1171,62 @@ const handleToolChat = (
         sendImageState({ status: "generating", modelId: imageModel.id, modelName: imageModel.name, prompt });
         try {
           let image: GeneratedImage;
-          if (imageModel.id === "@cf/black-forest-labs/flux-2-dev") {
+          if (imageModel.id === "@cf/black-forest-labs/flux-2-dev" && durableImageJobsAvailable(env)) {
             jobId = crypto.randomUUID();
             const accessToken = Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join("");
-            const instance = await env.IMAGE_WORKFLOW.create({
-              id: jobId,
-              params: {
-                accessToken,
-                aspectRatio,
-                clientId: getClientId(request),
-                jobId,
+            let instance: WorkflowInstance | undefined;
+            try {
+              instance = await env.IMAGE_WORKFLOW!.create({
+                id: jobId,
+                params: {
+                  accessToken,
+                  aspectRatio,
+                  clientId: getClientId(request),
+                  jobId,
+                  modelId: imageModel.id,
+                  oauthSessionId,
+                  publicPoolSeed,
+                  prompt,
+                },
+                retention: { successRetention: "1 day", errorRetention: "1 day" },
+              });
+            } catch (error) {
+              console.warn("Durable image workflow is unavailable; returning the image directly.", {
+                model: imageModel.id,
+                message: error instanceof Error ? error.message : "Unknown workflow error",
+              });
+            }
+
+            if (!instance) {
+              jobId = undefined;
+              image = await generateImage(ai, imageModel.id, prompt, aspectRatio);
+            } else {
+              sendImageState({
+                status: "generating",
                 modelId: imageModel.id,
-                oauthSessionId,
-                publicPoolSeed,
+                modelName: imageModel.name,
                 prompt,
-              },
-              retention: { successRetention: "1 day", errorRetention: "1 day" },
-            });
-            sendImageState({
-              status: "generating",
-              modelId: imageModel.id,
-              modelName: imageModel.name,
-              prompt,
-              jobId,
-            });
-            image = workflowOutputToImage(await waitForWorkflowOutput(instance));
+                jobId,
+              });
+              try {
+                image = workflowOutputToImage(await waitForWorkflowOutput(instance));
+              } catch (error) {
+                if (!isImagePersistenceUnavailable(error)) throw error;
+                console.warn("R2 image persistence is unavailable; returning the image directly.", {
+                  model: imageModel.id,
+                  message: error instanceof Error ? error.message : "Unknown R2 error",
+                });
+                jobId = undefined;
+                sendImageState({ status: "generating", modelId: imageModel.id, modelName: imageModel.name, prompt });
+                image = await generateImage(ai, imageModel.id, prompt, aspectRatio);
+              }
+            }
           } else {
+            if (imageModel.id === "@cf/black-forest-labs/flux-2-dev") {
+              console.info("R2 image persistence is not configured; returning the image directly.", {
+                model: imageModel.id,
+              });
+            }
             image = await generateImage(ai, imageModel.id, prompt, aspectRatio);
           }
           imageInvocationSucceeded = true;
@@ -1502,6 +1558,7 @@ export default {
       return json({
         ok: true,
         service: "neurondeck",
+        imageDelivery: durableImageJobsAvailable(env) ? "durable" : "direct",
         modelCount: catalog.models.length,
         imageModelCount: IMAGE_MODELS.length,
         ttsModelCount: Object.keys(TTS_MODEL_IDS).length,

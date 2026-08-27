@@ -31,7 +31,7 @@ NeuronDeck brings Cloudflare-hosted chat models, multimodal input, image generat
 - Markdown, GitHub-flavored tables, syntax highlighting, code copying, and rendered reasoning
 - Function Calling image generation with FLUX.2 Klein 9B, FLUX.2 Dev, Lucid Origin, and Phoenix 1.0
 - On-demand assistant read-aloud: device system voices for Chinese and multilingual speech, with optional high-quality Aura-2 for English/Spanish
-- Cloudflare Workflows and R2 for long-running image jobs that can recover after backgrounding or refresh
+- Adaptive image delivery: direct browser responses by default, optional Workflows and R2 for recovery, with automatic fallback when persistence is unavailable
 - Model-aware output token limits, plus per-conversation system prompts, temperature, and output controls
 - Browser-local IndexedDB history, mobile refinements, message timestamps, and generation duration
 - Optional public quota pool with stable distribution and automatic failover across administrator-provided Cloudflare accounts
@@ -40,11 +40,37 @@ NeuronDeck brings Cloudflare-hosted chat models, multimodal input, image generat
 
 ## One-click deployment
 
-Select **Deploy to Cloudflare** above, then sign in to Cloudflare and GitHub to create your own repository and Worker. Cloudflare reads the portable `wrangler.jsonc`, configures Workers AI, and provisions KV and R2 resources for the new deployment. The application is published to the deployer's own `workers.dev` address; it does not bind `ai.chatgpt.org.uk` or connect to this project's production resources.
+Select **Deploy to Cloudflare** above, then sign in to Cloudflare and GitHub to create your own repository and Worker. Cloudflare reads the portable `wrangler.jsonc`, configures Workers AI, and provisions KV for the new deployment. The application is published to the deployer's own `workers.dev` address; it does not bind `ai.chatgpt.org.uk` or connect to this project's production resources.
+
+The default deployment **does not require an R2 subscription**. Generated images are returned to the browser in the active request. Every included image model, including FLUX.2 Dev, remains available, but the request must stay connected and an unfinished image cannot be recovered after a refresh. If R2 and Workflows are configured, NeuronDeck prefers a recoverable background job and automatically falls back to direct delivery when R2 is missing, the Workflow cannot start, or an R2 write fails.
 
 By default, the deployed Worker consumes Workers AI quota from the **Cloudflare account that owns the Worker**. User-facing Cloudflare OAuth is not enabled automatically because every deployment needs its own OAuth client, callback domain, and session secret.
 
 Cloudflare documentation: [Deploy to Cloudflare buttons](https://developers.cloudflare.com/workers/platform/deploy-buttons/) · [Wrangler automatic provisioning](https://developers.cloudflare.com/workers/wrangler/configuration/#automatic-provisioning)
+
+### Optional: enable recoverable background image jobs
+
+To keep querying a FLUX.2 Dev result after backgrounding, a dropped connection, or a refresh, enable R2 in your Cloudflare account and add both bindings below to your Wrangler configuration. See [`wrangler.production.example.jsonc`](./wrangler.production.example.jsonc) for a complete example:
+
+```jsonc
+"r2_buckets": [
+  {
+    "binding": "IMAGE_RESULTS",
+    "bucket_name": "your-image-results-bucket"
+  }
+],
+"workflows": [
+  {
+    "binding": "IMAGE_WORKFLOW",
+    "name": "your-neurondeck-image-generation",
+    "class_name": "ImageGenerationWorkflow"
+  }
+]
+```
+
+Both bindings must be present. Once enabled, FLUX.2 Dev runs as a Workflow and stores its result temporarily in R2, while faster image models continue to return directly. If an R2 write fails, NeuronDeck stops pointless Workflow retries, generates the image once more, and returns it directly to the browser.
+
+Cloudflare documentation: [Enable R2](https://developers.cloudflare.com/r2/get-started/) · [Workflows configuration](https://developers.cloudflare.com/workers/wrangler/configuration/#workflows)
 
 ### Optional: configure a public site quota pool
 
@@ -135,7 +161,7 @@ For Vite HMR, keep the Worker on port `8787` and run `npm run dev` in a second t
 
 ## Manual deployment
 
-`wrangler.jsonc` is the portable public template. It enables `workers.dev` and lets Wrangler provision resources in the current account.
+`wrangler.jsonc` is the portable public template without a mandatory R2 dependency. It enables `workers.dev` and lets Wrangler configure Workers AI and KV in the current account. Add R2 and Workflows as described above only when recoverable background image jobs are needed.
 
 ```bash
 command -v wrangler
@@ -171,8 +197,8 @@ Browser
 Cloudflare Worker
 ├── model allowlist, input validation, and genuine SSE forwarding
 ├── Workers AI binding / public credential pool / user-authorized REST API
-├── Function Calling, on-demand speech synthesis, and image-generation Workflow
-├── encrypted OAuth KV · R2 image results · Rate Limiting
+├── Function Calling, on-demand speech synthesis, and adaptive image delivery
+├── encrypted OAuth KV · optional Workflow/R2 image results · Rate Limiting
 └── Workers Static Assets
 ```
 

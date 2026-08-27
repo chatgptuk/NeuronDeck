@@ -637,6 +637,125 @@ describe("image generation function calling", () => {
     expect(body).toContain('"elapsedMs":95000');
   });
 
+  it("returns FLUX.2 Dev directly when durable image bindings are not configured", async () => {
+    const devModel = "@cf/black-forest-labs/flux-2-dev";
+    const ai = {
+      run: vi.fn(async (model: string, input: Record<string, unknown>) => {
+        if (input.tools) {
+          return {
+            choices: [{
+              message: {
+                tool_calls: [{
+                  id: "direct-dev-image-call",
+                  type: "function",
+                  function: {
+                    name: "generate_image",
+                    arguments: JSON.stringify({ prompt: "A direct silver lake", aspect_ratio: "square" }),
+                  },
+                }],
+              },
+            }],
+          };
+        }
+        if (model === devModel) return { image: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB" };
+        return new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('data: {"response":"直接返回完成。"}\n\ndata: [DONE]\n\n'));
+            controller.close();
+          },
+        });
+      }),
+      toMarkdown: vi.fn(),
+    };
+    const response = await worker.fetch(new Request("https://ai.chatgpt.org.uk/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "accept-language": "zh-CN",
+        "x-neurondeck-client": "test-client-1234",
+      },
+      body: JSON.stringify({
+        model: chatModel,
+        imageModel: devModel,
+        messages: [{ role: "user", content: "生成一张银色湖面的图片" }],
+      }),
+    }), {
+      AI: ai,
+      ASSETS: { fetch: vi.fn() },
+      CHAT_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+    } as never);
+    const body = await response.text();
+
+    expect(ai.run.mock.calls.map((call) => call[0])).toEqual([chatModel, devModel, chatModel]);
+    expect(body).toContain('"dataUrl":"data:image/png;base64,iVBOR');
+    expect(body).not.toContain('"jobId"');
+    expect(body).toContain("直接返回完成。");
+  });
+
+  it("falls back to a direct FLUX.2 Dev response when R2 persistence fails", async () => {
+    const devModel = "@cf/black-forest-labs/flux-2-dev";
+    const ai = {
+      run: vi.fn(async (model: string, input: Record<string, unknown>) => {
+        if (input.tools) {
+          return {
+            choices: [{
+              message: {
+                tool_calls: [{
+                  id: "r2-fallback-image-call",
+                  type: "function",
+                  function: {
+                    name: "generate_image",
+                    arguments: JSON.stringify({ prompt: "A lake after R2 failure", aspect_ratio: "landscape" }),
+                  },
+                }],
+              },
+            }],
+          };
+        }
+        if (model === devModel) return { image: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB" };
+        return new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('data: {"response":"回退生图完成。"}\n\ndata: [DONE]\n\n'));
+            controller.close();
+          },
+        });
+      }),
+      toMarkdown: vi.fn(),
+    };
+    const create = vi.fn(async (options: { id: string }) => ({
+      id: options.id,
+      status: vi.fn(async () => ({
+        status: "errored",
+        error: { message: "IMAGE_PERSISTENCE_UNAVAILABLE: R2 subscription is not enabled." },
+      })),
+    }));
+    const response = await worker.fetch(new Request("https://ai.chatgpt.org.uk/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "accept-language": "zh-CN",
+        "x-neurondeck-client": "test-client-1234",
+      },
+      body: JSON.stringify({
+        model: chatModel,
+        imageModel: devModel,
+        messages: [{ role: "user", content: "生成一张湖面照片" }],
+      }),
+    }), {
+      AI: ai,
+      ASSETS: { fetch: vi.fn() },
+      CHAT_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+      IMAGE_WORKFLOW: { create, get: vi.fn() },
+      IMAGE_RESULTS: { get: vi.fn(), put: vi.fn() },
+    } as never);
+    const body = await response.text();
+
+    expect(create).toHaveBeenCalledOnce();
+    expect(ai.run.mock.calls.map((call) => call[0])).toEqual([chatModel, devModel, chatModel]);
+    expect(body).toContain('"dataUrl":"data:image/png;base64,iVBOR');
+    expect(body).toContain("回退生图完成。");
+  });
+
   it("passes only an opaque pool seed to FLUX.2 Dev workflows", async () => {
     const devModel = "@cf/black-forest-labs/flux-2-dev";
     const publicAccount = publicPoolAccounts[0];
