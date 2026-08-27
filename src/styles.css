@@ -339,10 +339,13 @@ input:focus-visible {
 .reasoning-markdown > :last-child { margin-bottom: 0; }
 .reasoning-markdown p { margin: 0.65em 0; white-space: normal; }
 .reasoning-markdown .code-block { border-radius: 12px; box-shadow: none; }
-.message-actions { display: flex; align-items: center; gap: 4px; margin: 11px 0 0 37px; }
+.message-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 11px 0 0 37px; }
 .message.user .message-actions { justify-content: flex-end; margin-right: 2px; }
 .message-actions button { display: flex; align-items: center; gap: 5px; border: 0; border-radius: 8px; background: transparent; padding: 6px 8px; color: var(--muted); font-size: 10px; }
 .message-actions button:hover { background: var(--panel-soft); color: var(--text); }
+.message-actions .speech-action.active { background: var(--accent-pale); color: var(--accent-bright); }
+.message-actions .speech-action:disabled { cursor: wait; opacity: 0.72; }
+.speech-error { max-width: min(260px, 100%); overflow: hidden; color: var(--danger); font-size: 8px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
 .message-time-toggle { opacity: 0.65; }
 .message-time { max-width: 0; overflow: hidden; color: var(--muted); font-size: 9px; opacity: 0; transform: translateX(-4px); transition: max-width 180ms ease, opacity 160ms ease, transform 180ms ease; white-space: nowrap; }
 .message-time.revealed { max-width: 130px; opacity: 0.72; transform: translateX(0); }
@@ -496,7 +499,22 @@ input:focus-visible {
 .number-hint { display: flex; align-items: flex-start; gap: 10px; margin-top: 8px; color: var(--muted); font-size: 8px; line-height: 1.45; }
 .number-hint span { flex: 1; }
 .number-hint button { flex: 0 0 auto; border: 0; border-bottom: 1px solid color-mix(in srgb, var(--accent) 32%, transparent); background: transparent; padding: 0 0 2px; color: var(--accent-bright); font-size: inherit; }
+.speech-model-section > p,
 .image-model-section > p { margin: -1px 0 11px; color: var(--muted); font-size: 8px; line-height: 1.55; }
+.speech-model-options { display: flex; flex-direction: column; gap: 7px; }
+.speech-model-option { display: flex; width: 100%; min-width: 0; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 16px; background: color-mix(in srgb, var(--panel-raised) 58%, transparent); padding: 10px; text-align: left; transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease, transform 150ms ease; }
+.speech-model-option:hover { border-color: color-mix(in srgb, var(--accent) 22%, var(--line)); background: var(--panel-raised); box-shadow: 0 8px 22px rgba(41, 62, 51, 0.055); transform: translateY(-1px); }
+.speech-model-option.selected { border-color: color-mix(in srgb, var(--accent) 25%, var(--line)); background: linear-gradient(130deg, color-mix(in srgb, var(--accent-soft) 74%, var(--panel-raised)), var(--panel-raised)); }
+.speech-provider-mark { display: grid; width: 38px; height: 38px; flex: 0 0 38px; place-items: center; border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--line)); border-radius: 13px 16px 13px 16px; color: white; font-family: "Iowan Old Style", Georgia, serif; font-size: 14px; font-weight: 700; }
+.speech-provider-mark svg { width: 18px; height: 18px; stroke-width: 1.7; }
+.speech-provider-mark.aura { background: linear-gradient(145deg, #263f55, #5b668c 58%, #8c7ca0); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14); }
+.speech-provider-mark.melo { background: linear-gradient(145deg, #3f7966, #74a38d); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18); }
+.speech-model-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 3px; }
+.speech-model-copy strong { display: flex; min-width: 0; align-items: center; gap: 6px; color: var(--text); font-size: 9px; font-weight: 680; }
+.speech-model-copy strong em { border-radius: 999px; background: var(--accent-soft); padding: 2px 5px; color: var(--accent-bright); font-size: 6px; font-style: normal; font-weight: 650; }
+.speech-model-copy small { overflow: hidden; color: var(--muted-strong); font-size: 7px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
+.speech-model-copy i { color: var(--muted); font-size: 6px; font-style: normal; }
+.speech-model-check { display: grid; width: 22px; height: 22px; flex: 0 0 22px; place-items: center; border-radius: 50%; color: var(--accent-bright); }
 .image-model-options { display: flex; flex-direction: column; gap: 6px; }
 .image-model-option { display: flex; width: 100%; min-width: 0; align-items: center; gap: 10px; border: 1px solid transparent; border-radius: 15px; background: transparent; padding: 9px 8px; text-align: left; transition: border-color 150ms ease, background 150ms ease, transform 150ms ease; }
 .image-model-option:hover { background: var(--panel-soft); transform: translateY(-1px); }
@@ -656,7 +674,13 @@ input:focus-visible {
   .range-label output { font-size: 12px; }
   .range-hints { font-size: 10px; }
   .number-hint { font-size: 10px; line-height: 1.55; }
+  .speech-error { max-width: 220px; font-size: 10px; }
+  .speech-model-section > p,
   .image-model-section > p { font-size: 10px; }
+  .speech-model-copy strong { font-size: 12px; }
+  .speech-model-copy strong em { font-size: 8px; }
+  .speech-model-copy small { font-size: 10px; }
+  .speech-model-copy i { font-size: 9px; }
   .image-model-copy strong { font-size: 12px; }
   .image-model-copy strong em { font-size: 8px; }
   .image-model-copy small { font-size: 10px; }

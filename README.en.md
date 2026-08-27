@@ -24,12 +24,13 @@ NeuronDeck brings Cloudflare-hosted chat models, multimodal input, image generat
 
 ## Highlights
 
-- 28 Cloudflare-hosted chat models with search, capability filters, favorites, context sizes, and price ordering
+- 29 Cloudflare-hosted chat models with search, capability filters, favorites, context sizes, and price ordering
 - Chinese and English interface, light appearance by default, and a persistent theme switch
 - Genuine SSE streaming with stop, regenerate, copy, and edit-from-here actions
 - Image input for vision models, plus PDF, Word, spreadsheet, HTML, XML, OpenDocument, and Numbers attachments
 - Markdown, GitHub-flavored tables, syntax highlighting, code copying, and rendered reasoning
 - Function Calling image generation with FLUX.2 Klein 9B, FLUX.2 Dev, Lucid Origin, and Phoenix 1.0
+- On-demand assistant read-aloud: Aura-2 for high-quality English/Spanish and MeloTTS for affordable Chinese and multilingual speech
 - Cloudflare Workflows and R2 for long-running image jobs that can recover after backgrounding or refresh
 - Model-aware output token limits, plus per-conversation system prompts, temperature, and output controls
 - Browser-local IndexedDB history, mobile refinements, message timestamps, and generation duration
@@ -47,7 +48,7 @@ Cloudflare documentation: [Deploy to Cloudflare buttons](https://developers.clou
 
 ### Optional: configure a public site quota pool
 
-An administrator can provide up to 16 Cloudflare accounts for anonymous visitors. Chat, file conversion, Function Calling, and background image jobs all use the same pool. A browser is assigned a stable starting entry, and the Worker automatically fails over when an account returns an authorization, quota, capacity, or server error. A user who connects their own Cloudflare account always uses their own quota first.
+An administrator can provide up to 16 Cloudflare accounts for anonymous visitors. Chat, file conversion, Function Calling, speech synthesis, and background image jobs all use the same pool. A browser is assigned a stable starting entry, and the Worker automatically fails over when an account returns an authorization, quota, capacity, or server error. A user who connects their own Cloudflare account always uses their own quota first.
 
 1. In each Cloudflare account, open Workers AI and select **Use REST API → Create a Workers AI API Token**. For a custom token, grant only `Workers AI Read` and `Workers AI Edit` on that account. Never use a Global API Key.
 
@@ -76,7 +77,7 @@ An administrator can provide up to 16 Cloudflare accounts for anonymous visitors
 
    Use `wrangler.jsonc` instead when deploying the public template. Deleting this Secret disables the pool and returns anonymous traffic to the owning account's AI binding.
 
-The pool has an additional limit of 60 requests per minute in each Cloudflare location, while the existing 10 requests per visitor per minute remains in force. An invalid Secret fails closed instead of silently charging the Worker owner's account. Cloudflare limits an individual Secret/environment variable to 5 KB.
+The pool has an additional limit of 60 requests per minute in each Cloudflare location. Each visitor is limited to 10 chat requests and 6 speech-synthesis requests per minute. An invalid Secret fails closed instead of silently charging the Worker owner's account. Cloudflare limits an individual Secret/environment variable to 5 KB.
 
 Cloudflare documentation: [Workers AI REST API](https://developers.cloudflare.com/workers-ai/get-started/rest-api/) · [Worker Secrets](https://developers.cloudflare.com/workers/configuration/secrets/) · [Worker environment variable limits](https://developers.cloudflare.com/workers/platform/limits/#environment-variables)
 
@@ -164,13 +165,13 @@ The sync script only permits a system-global Wrangler binary. It reads the curre
 Browser
 ├── React + Vite interface
 ├── IndexedDB conversations and settings
-└── /api/models · /api/chat · /api/images · /api/attachments
+└── /api/models · /api/chat · /api/images · /api/tts · /api/attachments
                     │
                     ▼
 Cloudflare Worker
 ├── model allowlist, input validation, and genuine SSE forwarding
 ├── Workers AI binding / public credential pool / user-authorized REST API
-├── Function Calling and image-generation Workflow
+├── Function Calling, on-demand speech synthesis, and image-generation Workflow
 ├── encrypted OAuth KV · R2 image results · Rate Limiting
 └── Workers Static Assets
 ```

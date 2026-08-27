@@ -57,6 +57,14 @@
         "limit": 60,
         "period": 60
       }
+    },
+    {
+      "name": "TTS_RATE_LIMITER",
+      "namespace_id": "1003",
+      "simple": {
+        "limit": 6,
+        "period": 60
+      }
     }
   ],
   "observability": {

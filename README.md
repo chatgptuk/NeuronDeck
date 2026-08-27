@@ -24,12 +24,13 @@ NeuronDeck 把 Cloudflare 托管的对话模型、多模态输入、图片生成
 
 ## 主要功能
 
-- 28 个 Cloudflare 托管的对话模型，支持搜索、能力筛选、收藏、上下文大小与价格排序
+- 29 个 Cloudflare 托管的对话模型，支持搜索、能力筛选、收藏、上下文大小与价格排序
 - 中文与英文界面，默认浅色外观，并可持久化切换主题
 - 真正的 SSE 流式生成，支持停止、重新生成、复制与“从这里编辑”
 - 视觉模型支持图片输入；支持 PDF、Word、表格、HTML、XML、OpenDocument 与 Numbers 等附件
 - Markdown、GitHub 风格表格、代码高亮、代码复制与推理过程渲染
 - 通过 Function Calling 调用 FLUX.2 Klein 9B、FLUX.2 Dev、Lucid Origin 与 Phoenix 1.0 生图
+- AI 消息可按需朗读：Aura-2 提供高质量英语/西班牙语，MeloTTS 提供中文与多语言低成本语音
 - 使用 Cloudflare Workflows 与 R2 承接耗时生图任务，切到后台或刷新后仍可恢复结果
 - 根据模型能力设置合理的最大输出 Token，并提供对话级系统提示词、温度与输出上限
 - IndexedDB 本地对话历史、移动端优化、消息时间与生成耗时
@@ -47,7 +48,7 @@ Cloudflare 文档：[Deploy to Cloudflare 按钮](https://developers.cloudflare.
 
 ### 可选：配置站点公共额度池
 
-管理员可以提供最多 16 个 Cloudflare 账户供匿名访客公开使用。聊天、文件转换、Function Calling 与后台生图都会使用同一额度池；相同浏览器会稳定分配到同一入口，遇到鉴权、额度、容量或服务端错误时自动切换到下一账户。用户连接自己的 Cloudflare 账户后，始终优先使用用户自己的额度。
+管理员可以提供最多 16 个 Cloudflare 账户供匿名访客公开使用。聊天、文件转换、Function Calling、语音合成与后台生图都会使用同一额度池；相同浏览器会稳定分配到同一入口，遇到鉴权、额度、容量或服务端错误时自动切换到下一账户。用户连接自己的 Cloudflare 账户后，始终优先使用用户自己的额度。
 
 1. 在每个 Cloudflare 账户的 Workers AI 页面选择 **Use REST API → Create a Workers AI API Token**。如需自定义 Token，请仅授予该账户的 `Workers AI Read` 与 `Workers AI Edit` 权限；不要使用 Global API Key。
 
@@ -76,7 +77,7 @@ Cloudflare 文档：[Deploy to Cloudflare 按钮](https://developers.cloudflare.
 
    使用公开模板时，将配置路径换成 `wrangler.jsonc`。删除这个 Secret 即可停用额度池并恢复使用 Worker 所属账户的 AI Binding。
 
-公共池在每个 Cloudflare 边缘位置额外受每分钟 60 次的池级限流保护，每位访客仍受每分钟 10 次限制。Secret 格式不合法时服务会拒绝匿名 AI 请求，不会静默消耗主站账户额度。Cloudflare 对单个 Secret/环境变量限制为 5 KB。
+公共池在每个 Cloudflare 边缘位置额外受每分钟 60 次的池级限流保护；每位访客的聊天请求限制为每分钟 10 次，语音合成限制为每分钟 6 次。Secret 格式不合法时服务会拒绝匿名 AI 请求，不会静默消耗主站账户额度。Cloudflare 对单个 Secret/环境变量限制为 5 KB。
 
 Cloudflare 文档：[Workers AI REST API](https://developers.cloudflare.com/workers-ai/get-started/rest-api/) · [Worker Secrets](https://developers.cloudflare.com/workers/configuration/secrets/) · [Worker 环境变量限制](https://developers.cloudflare.com/workers/platform/limits/#environment-variables)
 
@@ -164,13 +165,13 @@ node scripts/sync-models.mjs
 浏览器
 ├── React + Vite 界面
 ├── IndexedDB 对话与设置
-└── /api/models · /api/chat · /api/images · /api/attachments
+└── /api/models · /api/chat · /api/images · /api/tts · /api/attachments
                     │
                     ▼
 Cloudflare Worker
 ├── 模型白名单、输入校验与真正的 SSE 转发
 ├── Workers AI Binding / 公共凭证池 / 用户授权后的 REST API
-├── Function Calling 与图片生成 Workflow
+├── Function Calling、按需语音合成与图片生成 Workflow
 ├── KV 加密 OAuth 会话 · R2 图片结果 · Rate Limiting
 └── Workers Static Assets
 ```

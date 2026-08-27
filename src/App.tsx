@@ -1,5 +1,6 @@
 import {
   Archive,
+  AudioLines,
   Check,
   ChevronDown,
   Cloud,
@@ -14,6 +15,7 @@ import {
   Moon,
   PanelRight,
   Paperclip,
+  Pause,
   Pencil,
   Plus,
   RefreshCw,
@@ -22,6 +24,7 @@ import {
   Square,
   Sun,
   Trash2,
+  Volume2,
   X,
 } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -67,6 +70,11 @@ import { waitForImageJob } from "./lib/image-jobs";
 import { recoverInterruptedMessage } from "./lib/workspace-recovery";
 import { formatElapsedDuration, formatMessageTimestamp } from "./lib/time";
 import {
+  prepareSpeechText,
+  resolveSpeechRequest,
+  type SpeechMode,
+} from "./lib/speech";
+import {
   DEFAULT_IMAGE_MODEL_ID,
   getImageModel,
   IMAGE_MODELS,
@@ -99,6 +107,7 @@ const ModelPicker = lazy(() =>
 
 const id = (): string => crypto.randomUUID();
 const now = (): string => new Date().toISOString();
+const MAX_CACHED_SPEECH_AUDIO = 12;
 const normalizeComposerText = (value: string): string => value.replace(/\r\n?/g, "\n");
 const insertComposerText = (editor: HTMLDivElement, value: string): string => {
   const selection = window.getSelection();
@@ -125,6 +134,11 @@ const insertComposerText = (editor: HTMLDivElement, value: string): string => {
 const LEGACY_VISION_MODEL_ID = "@cf/meta/llama-3.2-11b-vision-instruct";
 const MAX_CONTEXT_ATTACHMENTS = 8;
 const STARTER_ICONS = [IdeaGlyph, CodeGlyph, PerspectiveGlyph] as const;
+
+interface SpeechPlayback {
+  messageId: string;
+  status: "loading" | "playing" | "paused";
+}
 
 const pruneAttachmentsForRequest = (messages: ChatMessage[], modelId: string): ChatMessage[] => {
   let attachmentSlots = MAX_CONTEXT_ATTACHMENTS;
@@ -228,7 +242,15 @@ function App() {
   const [theme, setTheme] = useState<"dark" | "light">(
     () => (localStorage.getItem("neurondeck-theme-v2") as "dark" | "light" | null) ?? "light",
   );
+  const [speechMode, setSpeechMode] = useState<SpeechMode>(
+    () => localStorage.getItem("neurondeck-speech-mode") === "quality" ? "quality" : "economy",
+  );
+  const [speechPlayback, setSpeechPlayback] = useState<SpeechPlayback | null>(null);
+  const [speechError, setSpeechError] = useState<{ messageId: string; message: string } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const speechAbortRef = useRef<AbortController | null>(null);
+  const speechAudioRef = useRef<HTMLAudioElement | null>(null);
+  const speechUrlsRef = useRef(new Map<string, string>());
   const composerEditorRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const messageEndRef = useRef<HTMLDivElement | null>(null);
@@ -249,6 +271,30 @@ function App() {
   const attachmentTarget = `${activeConversation.id}:${activeModel.id}`;
   const attachmentTargetRef = useRef(attachmentTarget);
   attachmentTargetRef.current = attachmentTarget;
+
+  const stopSpeechPlayback = useCallback(() => {
+    speechAbortRef.current?.abort();
+    speechAbortRef.current = null;
+    speechAudioRef.current?.pause();
+    speechAudioRef.current = null;
+    setSpeechPlayback(null);
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("neurondeck-speech-mode", speechMode);
+  }, [speechMode]);
+
+  useEffect(() => {
+    stopSpeechPlayback();
+    setSpeechError(null);
+  }, [activeConversation.id, speechMode, stopSpeechPlayback]);
+
+  useEffect(() => () => {
+    speechAbortRef.current?.abort();
+    speechAudioRef.current?.pause();
+    for (const url of speechUrlsRef.current.values()) URL.revokeObjectURL(url);
+    speechUrlsRef.current.clear();
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -778,6 +824,110 @@ function App() {
     window.setTimeout(() => setCopiedMessageId(null), 1400);
   };
 
+  const toggleSpeech = useCallback(async (message: ChatMessage) => {
+    if (speechPlayback?.messageId === message.id) {
+      if (speechPlayback.status === "loading") return;
+      const audio = speechAudioRef.current;
+      if (!audio) return;
+      if (speechPlayback.status === "playing") {
+        audio.pause();
+        setSpeechPlayback({ messageId: message.id, status: "paused" });
+        return;
+      }
+      try {
+        await audio.play();
+        setSpeechPlayback({ messageId: message.id, status: "playing" });
+      } catch {
+        setSpeechPlayback({ messageId: message.id, status: "paused" });
+      }
+      return;
+    }
+
+    stopSpeechPlayback();
+    setSpeechError(null);
+    const text = prepareSpeechText(message.content);
+    if (!text) {
+      setSpeechError({ messageId: message.id, message: t.errors.invalid_tts_text });
+      return;
+    }
+
+    const selection = resolveSpeechRequest(speechMode, text, language);
+    const cacheKey = `${message.id}:${speechMode}:${selection.model}:${selection.language}`;
+    let audioUrl = speechUrlsRef.current.get(cacheKey);
+    if (!audioUrl) {
+      const controller = new AbortController();
+      speechAbortRef.current = controller;
+      setSpeechPlayback({ messageId: message.id, status: "loading" });
+      try {
+        const response = await fetch("/api/tts", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-neurondeck-client": getClientId(),
+            "accept-language": language === "zh" ? "zh-CN" : "en",
+          },
+          body: JSON.stringify({ text, model: selection.model, language: selection.language }),
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          const data = (await response.json().catch(() => null)) as
+            | { error?: { code?: string; message?: string } }
+            | null;
+          throw new Error(getLocalizedError(
+            language,
+            data?.error?.code,
+            data?.error?.message || t.speechFailed,
+          ));
+        }
+        const audio = await response.blob();
+        if (!audio.size || !audio.type.toLowerCase().startsWith("audio/")) throw new Error(t.speechFailed);
+        audioUrl = URL.createObjectURL(audio);
+        if (speechUrlsRef.current.size >= MAX_CACHED_SPEECH_AUDIO) {
+          const oldest = speechUrlsRef.current.entries().next().value as [string, string] | undefined;
+          if (oldest) {
+            URL.revokeObjectURL(oldest[1]);
+            speechUrlsRef.current.delete(oldest[0]);
+          }
+        }
+        speechUrlsRef.current.set(cacheKey, audioUrl);
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setSpeechPlayback(null);
+        setSpeechError({
+          messageId: message.id,
+          message: error instanceof Error ? error.message : t.speechFailed,
+        });
+        return;
+      } finally {
+        if (speechAbortRef.current === controller) speechAbortRef.current = null;
+      }
+    }
+
+    const audio = new Audio(audioUrl);
+    speechAudioRef.current = audio;
+    audio.onended = () => {
+      if (speechAudioRef.current !== audio) return;
+      speechAudioRef.current = null;
+      setSpeechPlayback(null);
+    };
+    audio.onerror = () => {
+      if (speechAudioRef.current !== audio) return;
+      speechAudioRef.current = null;
+      if (speechUrlsRef.current.get(cacheKey) === audioUrl) {
+        speechUrlsRef.current.delete(cacheKey);
+        URL.revokeObjectURL(audioUrl);
+      }
+      setSpeechPlayback(null);
+      setSpeechError({ messageId: message.id, message: t.speechFailed });
+    };
+    try {
+      await audio.play();
+      setSpeechPlayback({ messageId: message.id, status: "playing" });
+    } catch {
+      setSpeechPlayback({ messageId: message.id, status: "paused" });
+    }
+  }, [language, speechMode, speechPlayback, stopSpeechPlayback, t.errors.invalid_tts_text, t.speechFailed]);
+
   const handleFileSelection = async (files: FileList | null) => {
     if (!activeModelSupportsAttachments || !files?.length || attachmentBusy || generating) return;
     const targetAtStart = attachmentTargetRef.current;
@@ -1172,7 +1322,31 @@ function App() {
                             {copiedMessageId === message.id ? t.copied : t.copy}
                           </button>
                           {message.role === "assistant" ? (
-                            <button onClick={() => regenerate(message.id)} type="button"><RefreshCw size={14} />{t.regenerate}</button>
+                            <>
+                              {message.content ? (
+                                <button
+                                  className={speechPlayback?.messageId === message.id ? "speech-action active" : "speech-action"}
+                                  onClick={() => void toggleSpeech(message)}
+                                  disabled={speechPlayback?.messageId === message.id && speechPlayback.status === "loading"}
+                                  type="button"
+                                  aria-pressed={speechPlayback?.messageId === message.id && speechPlayback.status === "playing"}
+                                >
+                                  {speechPlayback?.messageId === message.id && speechPlayback.status === "loading"
+                                    ? <LoaderCircle className="spinning" size={14} />
+                                    : speechPlayback?.messageId === message.id && speechPlayback.status === "playing"
+                                      ? <Pause size={14} />
+                                      : <Volume2 size={14} />}
+                                  {speechPlayback?.messageId === message.id && speechPlayback.status === "loading"
+                                    ? t.preparingSpeech
+                                    : speechPlayback?.messageId === message.id && speechPlayback.status === "playing"
+                                      ? t.pauseSpeech
+                                      : speechPlayback?.messageId === message.id && speechPlayback.status === "paused"
+                                        ? t.resumeSpeech
+                                        : t.readAloud}
+                                </button>
+                              ) : null}
+                              <button onClick={() => regenerate(message.id)} type="button"><RefreshCw size={14} />{t.regenerate}</button>
+                            </>
                           ) : (
                             <button onClick={() => editMessage(message.id)} type="button"><Pencil size={14} />{t.editFromHere}</button>
                           )}
@@ -1188,6 +1362,9 @@ function App() {
                             dateTime={message.createdAt}
                             title={new Date(message.createdAt).toLocaleString(language === "zh" ? "zh-CN" : "en-US")}
                           >{formatMessageTimestamp(message.createdAt, language)}</time>
+                          {speechError?.messageId === message.id ? (
+                            <span className="speech-error" role="alert" title={speechError.message}>{speechError.message}</span>
+                          ) : null}
                         </div>
                       )}
                     </article>
@@ -1406,6 +1583,42 @@ function App() {
                     updatedAt: now(),
                   }))}
                 >{t.resetOutputTokens}</button>
+              </div>
+            </div>
+            <div className="inspector-section speech-model-section">
+              <span className="section-title"><AudioLines />{t.speechModel}</span>
+              <p>{t.speechModelDescription}</p>
+              <div className="speech-model-options" role="radiogroup" aria-label={t.speechModel}>
+                <button
+                  className={speechMode === "quality" ? "speech-model-option selected" : "speech-model-option"}
+                  type="button"
+                  role="radio"
+                  aria-checked={speechMode === "quality"}
+                  onClick={() => setSpeechMode("quality")}
+                >
+                  <span className="speech-provider-mark aura"><AudioLines /></span>
+                  <span className="speech-model-copy">
+                    <strong>{t.speechQuality}</strong>
+                    <small>{t.speechQualitySummary}</small>
+                    <i>{t.speechQualityPrice}</i>
+                  </span>
+                  <span className="speech-model-check">{speechMode === "quality" ? <Check size={14} /> : null}</span>
+                </button>
+                <button
+                  className={speechMode === "economy" ? "speech-model-option selected" : "speech-model-option"}
+                  type="button"
+                  role="radio"
+                  aria-checked={speechMode === "economy"}
+                  onClick={() => setSpeechMode("economy")}
+                >
+                  <span className="speech-provider-mark melo">M</span>
+                  <span className="speech-model-copy">
+                    <strong>{t.speechEconomy}<em>{t.speechDefault}</em></strong>
+                    <small>{t.speechEconomySummary}</small>
+                    <i>{t.speechEconomyPrice}</i>
+                  </span>
+                  <span className="speech-model-check">{speechMode === "economy" ? <Check size={14} /> : null}</span>
+                </button>
               </div>
             </div>
             {activeModelSupportsTools ? (

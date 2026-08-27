@@ -18,6 +18,7 @@
     "src/lib/chat-input.ts",
     "src/lib/image-models.ts",
     "src/lib/output-tokens.ts",
+    "src/lib/speech.ts",
     "src/types.ts"
   ]
 }

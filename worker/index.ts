@@ -18,6 +18,14 @@ import {
   isImageModelId,
 } from "../src/lib/image-models";
 import { clampOutputTokens, getOutputTokenPolicyForModel } from "../src/lib/output-tokens";
+import {
+  isSpeechLanguage,
+  isTtsModelId,
+  MAX_SPEECH_CHARACTERS,
+  TTS_MODEL_IDS,
+  type SpeechLanguage,
+  type TtsModelId,
+} from "../src/lib/speech";
 import type { GeneratedImage, ImageGenerationState } from "../src/types";
 import {
   orderPublicAiAccounts,
@@ -37,6 +45,7 @@ interface Env extends CloudflareOAuthEnv {
   IMAGE_WORKFLOW: Workflow<ImageWorkflowParams>;
   PUBLIC_AI_ACCOUNTS?: string;
   PUBLIC_AI_RATE_LIMITER?: RateLimiter;
+  TTS_RATE_LIMITER: RateLimiter;
 }
 
 interface ChatBody {
@@ -45,6 +54,12 @@ interface ChatBody {
   temperature?: unknown;
   maxTokens?: unknown;
   imageModel?: unknown;
+}
+
+interface TtsBody {
+  text?: unknown;
+  model?: unknown;
+  language?: unknown;
 }
 
 const modelIds = new Set(catalog.models.map((model) => model.id));
@@ -161,7 +176,7 @@ const createCloudflareRestAi = (context: CloudflareRestCredentials): WorkersAiBi
         method: "POST",
         headers: hasMultipartBody && typeof multipart?.contentType === "string"
           ? { "content-type": multipart.contentType }
-          : { "content-type": "application/json", accept: "application/json, text/event-stream, image/*" },
+          : { "content-type": "application/json", accept: "application/json, text/event-stream, image/*, audio/*" },
         body: hasMultipartBody
           ? multipartBody as BodyInit
           : JSON.stringify(input),
@@ -171,7 +186,7 @@ const createCloudflareRestAi = (context: CloudflareRestCredentials): WorkersAiBi
         if (!response.body) throw new Error("Cloudflare returned an empty AI stream.");
         return response.body;
       }
-      if (contentType.startsWith("image/") || contentType.includes("application/octet-stream")) {
+      if (contentType.startsWith("image/") || contentType.startsWith("audio/") || contentType.includes("application/octet-stream")) {
         return response;
       }
       const payload = await response.json() as CloudflareApiEnvelope;
@@ -448,6 +463,83 @@ const normalizeImageBytes = async (result: unknown): Promise<{ bytes: Uint8Array
 const normalizeImageOutput = async (result: unknown): Promise<string> => {
   const { bytes, mimeType } = await normalizeImageBytes(result);
   return `data:${mimeType};base64,${bytesToBase64(bytes)}`;
+};
+
+const audioBytesFromString = (value: string): Uint8Array => {
+  const dataUrl = /^data:audio\/[a-zA-Z0-9.+-]+;base64,(.+)$/s.exec(value);
+  const encoded = (dataUrl?.[1] ?? value).replace(/\s+/g, "");
+  return base64ToBytes(encoded);
+};
+
+const detectAudioMime = (bytes: Uint8Array): string => {
+  if (bytes.length >= 12 &&
+      bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+      bytes[8] === 0x57 && bytes[9] === 0x41 && bytes[10] === 0x56 && bytes[11] === 0x45) {
+    return "audio/wav";
+  }
+  if (bytes.length >= 4 && bytes[0] === 0x4f && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53) {
+    return "audio/ogg";
+  }
+  if (bytes.length >= 4 && bytes[0] === 0x66 && bytes[1] === 0x4c && bytes[2] === 0x61 && bytes[3] === 0x43) {
+    return "audio/flac";
+  }
+  if (bytes.length >= 2 && bytes[0] === 0xff && (bytes[1] === 0xf1 || bytes[1] === 0xf9)) {
+    return "audio/aac";
+  }
+  return "audio/mpeg";
+};
+
+const audioExtension = (contentType: string): string => {
+  if (contentType === "audio/wav") return "wav";
+  if (contentType === "audio/ogg") return "ogg";
+  if (contentType === "audio/flac") return "flac";
+  if (contentType === "audio/aac") return "aac";
+  return "mp3";
+};
+
+const audioResponse = (body: BodyInit, model: TtsModelId, language: SpeechLanguage, contentType = "audio/mpeg"): Response =>
+  new Response(body, {
+    headers: {
+      "content-type": contentType,
+      "cache-control": "private, no-store",
+      "content-disposition": `inline; filename="neurondeck-speech.${audioExtension(contentType)}"`,
+      "x-content-type-options": "nosniff",
+      "x-neurondeck-tts-model": model,
+      "x-neurondeck-tts-language": language,
+    },
+  });
+
+const normalizeAudioResponse = async (result: unknown, model: TtsModelId, language: SpeechLanguage): Promise<Response> => {
+  if (result instanceof Response) {
+    if (!result.body) throw new Error("The speech model returned empty audio.");
+    const contentType = result.headers.get("content-type")?.split(";")[0].toLowerCase() ?? "";
+    if (contentType.startsWith("audio/")) return audioResponse(result.body, model, language, contentType);
+    const bytes = new Uint8Array(await result.arrayBuffer());
+    return audioResponse(bytes, model, language, detectAudioMime(bytes));
+  }
+  if (result instanceof ReadableStream) return audioResponse(result, model, language);
+  if (result instanceof ArrayBuffer) {
+    const bytes = new Uint8Array(result);
+    return audioResponse(bytes, model, language, detectAudioMime(bytes));
+  }
+  if (ArrayBuffer.isView(result)) {
+    const bytes = new Uint8Array(result.buffer, result.byteOffset, result.byteLength);
+    return audioResponse(bytes, model, language, detectAudioMime(bytes));
+  }
+
+  const data = result && typeof result === "object" ? result as Record<string, unknown> : null;
+  const raw = typeof result === "string"
+    ? result
+    : typeof data?.audio === "string"
+      ? data.audio
+      : typeof data?.data === "string"
+        ? data.data
+        : typeof data?.response === "string"
+          ? data.response
+          : undefined;
+  if (!raw) throw new Error("The speech model returned invalid audio.");
+  const bytes = audioBytesFromString(raw);
+  return audioResponse(bytes, model, language, detectAudioMime(bytes));
 };
 
 const buildImageInput = (
@@ -1215,6 +1307,77 @@ const handleToolChat = (
   return new Response(stream, { headers: sseHeaders() });
 };
 
+const handleTts = async (request: Request, env: Env): Promise<Response> => {
+  if (!isSameOrigin(request)) {
+    return apiError("Cross-origin speech requests are not allowed.", 403, "origin_rejected");
+  }
+
+  const rateLimit = await env.TTS_RATE_LIMITER.limit({ key: getRateKey(request, "tts") });
+  if (!rateLimit.success) {
+    return apiError("Too many speech requests. Please wait a minute and try again.", 429, "tts_rate_limited");
+  }
+
+  let body: TtsBody;
+  try {
+    body = (await request.json()) as TtsBody;
+  } catch {
+    return apiError("The request body must be valid JSON.", 400, "invalid_json");
+  }
+
+  if (!isTtsModelId(body.model)) {
+    return apiError("Select a supported Cloudflare-hosted speech model.", 400, "invalid_tts_model");
+  }
+  if (typeof body.text !== "string" || !body.text.trim()) {
+    return apiError("Speech text is required.", 400, "invalid_tts_text");
+  }
+  const text = body.text.replace(/\s+/g, " ").trim();
+  if (text.length > MAX_SPEECH_CHARACTERS) {
+    return apiError(`Speech text cannot exceed ${MAX_SPEECH_CHARACTERS} characters.`, 400, "tts_text_too_long");
+  }
+  if (!isSpeechLanguage(body.language)) {
+    return apiError("Select a supported speech language.", 400, "invalid_tts_language");
+  }
+
+  const model = body.model;
+  const language = body.language;
+  if ((model === TTS_MODEL_IDS.auraEnglish && language !== "en") ||
+      (model === TTS_MODEL_IDS.auraSpanish && language !== "es")) {
+    return apiError("The selected Aura-2 model does not support this language.", 400, "invalid_tts_language");
+  }
+  const input = model === TTS_MODEL_IDS.melo
+    ? { prompt: text, lang: language }
+    : model === TTS_MODEL_IDS.auraSpanish
+      ? { text, speaker: "aquila", encoding: "mp3" }
+      : { text, speaker: "luna", encoding: "mp3" };
+  const resolvedAi = await resolveAiForRequest(request, env);
+  if (!resolvedAi.ok) return resolvedAi.response;
+
+  try {
+    let result: unknown;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        result = await resolvedAi.ai.run(model, input);
+        break;
+      } catch (error) {
+        const retryable = /3043|internal server error/i.test(error instanceof Error ? error.message : "");
+        if (!retryable || attempt === 2) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 160 * (attempt + 1)));
+      }
+    }
+    return normalizeAudioResponse(result, model, language);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Workers AI speech generation failed.";
+    console.error("Workers AI speech generation failed", { model, language, message });
+    return apiError(
+      /limit|quota|capacity/i.test(message)
+        ? "Cloudflare speech capacity or quota is temporarily unavailable. Please try again shortly."
+        : "The selected speech model could not generate audio. Try again shortly.",
+      502,
+      "tts_failed",
+    );
+  }
+};
+
 const handleChat = async (request: Request, env: Env): Promise<Response> => {
   if (!isSameOrigin(request)) {
     return apiError("Cross-origin AI requests are not allowed.", 403, "origin_rejected");
@@ -1343,6 +1506,7 @@ export default {
         service: "neurondeck",
         modelCount: catalog.models.length,
         imageModelCount: IMAGE_MODELS.length,
+        ttsModelCount: Object.keys(TTS_MODEL_IDS).length,
         catalogSyncedAt: catalog.syncedAt,
       });
     }
@@ -1366,6 +1530,10 @@ export default {
 
     if (request.method === "POST" && url.pathname === "/api/chat") {
       return handleChat(request, env);
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/tts") {
+      return handleTts(request, env);
     }
 
     if (request.method === "POST" && url.pathname === "/api/attachments/convert") {

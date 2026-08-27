@@ -322,6 +322,145 @@ describe("worker output token policy", () => {
   });
 });
 
+describe("speech synthesis API", () => {
+  const requestForSpeech = (body: Record<string, unknown>) => new Request("https://ai.chatgpt.org.uk/api/tts", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      origin: "https://ai.chatgpt.org.uk",
+      "x-neurondeck-client": "speech-test-client",
+    },
+    body: JSON.stringify(body),
+  });
+
+  it("streams Aura-2 English audio with a curated speaker", async () => {
+    const run = vi.fn(async () => new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(Uint8Array.from([73, 68, 51, 4]));
+        controller.close();
+      },
+    }));
+    const response = await worker.fetch(requestForSpeech({
+      model: "@cf/deepgram/aura-2-en",
+      language: "en",
+      text: "Thanks for calling. Your order shipped yesterday.",
+    }), {
+      AI: { run, toMarkdown: vi.fn() },
+      ASSETS: { fetch: vi.fn() },
+      CHAT_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+      TTS_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+    } as never);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("audio/mpeg");
+    expect(response.headers.get("x-neurondeck-tts-model")).toBe("@cf/deepgram/aura-2-en");
+    expect([...new Uint8Array(await response.arrayBuffer())]).toEqual([73, 68, 51, 4]);
+    expect(run).toHaveBeenCalledWith("@cf/deepgram/aura-2-en", {
+      text: "Thanks for calling. Your order shipped yesterday.",
+      speaker: "luna",
+      encoding: "mp3",
+    });
+  });
+
+  it("decodes MeloTTS audio and forwards the detected language", async () => {
+    const run = vi.fn(async () => ({ audio: btoa(String.fromCharCode(73, 68, 51, 3)) }));
+    const response = await worker.fetch(requestForSpeech({
+      model: "@cf/myshell-ai/melotts",
+      language: "zh",
+      text: "今天来介绍 Cloudflare Workers AI。",
+    }), {
+      AI: { run, toMarkdown: vi.fn() },
+      ASSETS: { fetch: vi.fn() },
+      CHAT_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+      TTS_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+    } as never);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-neurondeck-tts-language")).toBe("zh");
+    expect([...new Uint8Array(await response.arrayBuffer())]).toEqual([73, 68, 51, 3]);
+    expect(run).toHaveBeenCalledWith("@cf/myshell-ai/melotts", {
+      prompt: "今天来介绍 Cloudflare Workers AI。",
+      lang: "zh",
+    });
+  });
+
+  it("labels the WAV bytes returned by the live MeloTTS binding correctly", async () => {
+    const wav = Uint8Array.from([
+      0x52, 0x49, 0x46, 0x46, 0x24, 0, 0, 0, 0x57, 0x41, 0x56, 0x45, 0x66, 0x6d, 0x74, 0x20,
+    ]);
+    const response = await worker.fetch(requestForSpeech({
+      model: "@cf/myshell-ai/melotts",
+      language: "en",
+      text: "Hello.",
+    }), {
+      AI: { run: vi.fn(async () => wav), toMarkdown: vi.fn() },
+      ASSETS: { fetch: vi.fn() },
+      CHAT_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+      TTS_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+    } as never);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("audio/wav");
+    expect(response.headers.get("content-disposition")).toContain("neurondeck-speech.wav");
+    expect([...new Uint8Array(await response.arrayBuffer())]).toEqual([...wav]);
+  });
+
+  it("retries transient Workers AI 3043 speech failures", async () => {
+    const run = vi.fn()
+      .mockRejectedValueOnce(new Error("3043: Internal server error"))
+      .mockResolvedValueOnce(Uint8Array.from([73, 68, 51, 4]));
+    const response = await worker.fetch(requestForSpeech({
+      model: "@cf/myshell-ai/melotts",
+      language: "en",
+      text: "Hello.",
+    }), {
+      AI: { run, toMarkdown: vi.fn() },
+      ASSETS: { fetch: vi.fn() },
+      CHAT_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+      TTS_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+    } as never);
+
+    expect(response.status).toBe(200);
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects unsupported speech models before inference", async () => {
+    const run = vi.fn();
+    const response = await worker.fetch(requestForSpeech({
+      model: "@cf/deepgram/aura-1",
+      language: "en",
+      text: "Hello",
+    }), {
+      AI: { run, toMarkdown: vi.fn() },
+      ASSETS: { fetch: vi.fn() },
+      CHAT_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+      TTS_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+    } as never);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "invalid_tts_model" } });
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("rejects a language that does not match an Aura-2 variant", async () => {
+    const run = vi.fn();
+    const response = await worker.fetch(requestForSpeech({
+      model: "@cf/deepgram/aura-2-en",
+      language: "zh",
+      text: "你好",
+    }), {
+      AI: { run, toMarkdown: vi.fn() },
+      ASSETS: { fetch: vi.fn() },
+      CHAT_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+      TTS_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+    } as never);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "invalid_tts_language" } });
+    expect(run).not.toHaveBeenCalled();
+  });
+});
+
 describe("image generation function calling", () => {
   it("passes ordinary tool-model replies through the native stream", async () => {
     let finishStream: (() => void) | undefined;
