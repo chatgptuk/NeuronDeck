@@ -108,10 +108,13 @@ describe("Cloudflare OAuth routes", () => {
 
 describe("public Cloudflare AI account pool", () => {
   it("uses server-side public credentials for anonymous streaming requests", async () => {
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(
-      'data: {"response":"public pool"}\n\ndata: [DONE]\n\n',
-      { headers: { "content-type": "text/event-stream" } },
-    ));
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      fetchMock.mock.calls.length === 1
+        ? Response.json({ success: true, result: { response: "NO_IMAGE_TOOL" } })
+        : new Response(
+            'data: {"response":"public pool"}\n\ndata: [DONE]\n\n',
+            { headers: { "content-type": "text/event-stream" } },
+          ));
     vi.stubGlobal("fetch", fetchMock);
     const { env, run } = createEnv();
     const publicLimit = vi.fn(async () => ({ success: true }));
@@ -126,7 +129,7 @@ describe("public Cloudflare AI account pool", () => {
     expect(body).toContain("public pool");
     expect(run).not.toHaveBeenCalled();
     expect(publicLimit).toHaveBeenCalledWith({ key: "public-ai-pool" });
-    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     const [url, init] = fetchMock.mock.calls[0];
     const authorization = new Headers(init?.headers).get("authorization");
     expect(publicPoolAccounts.some((account) => String(url).includes(`/accounts/${account.accountId}/ai/run/`))).toBe(true);
@@ -136,11 +139,17 @@ describe("public Cloudflare AI account pool", () => {
   });
 
   it("fails over to the next public account on quota or authorization errors", async () => {
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => fetchMock.mock.calls.length === 1
-      ? Response.json({ success: false, errors: [{ message: "quota exceeded" }] }, { status: 429 })
-      : new Response('data: {"response":"fallback"}\n\ndata: [DONE]\n\n', {
-          headers: { "content-type": "text/event-stream" },
-        }));
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
+      if (fetchMock.mock.calls.length === 1) {
+        return Response.json({ success: false, errors: [{ message: "quota exceeded" }] }, { status: 429 });
+      }
+      if (fetchMock.mock.calls.length === 2) {
+        return Response.json({ success: true, result: { response: "NO_IMAGE_TOOL" } });
+      }
+      return new Response('data: {"response":"fallback"}\n\ndata: [DONE]\n\n', {
+        headers: { "content-type": "text/event-stream" },
+      });
+    });
     vi.stubGlobal("fetch", fetchMock);
     const { env } = createEnv();
     const response = await worker.fetch(textRequestFor(chatModel), {
@@ -151,7 +160,7 @@ describe("public Cloudflare AI account pool", () => {
 
     expect(response.status).toBe(200);
     expect(await response.text()).toContain("fallback");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     const authorizations = fetchMock.mock.calls.map(([, init]) => new Headers(init?.headers).get("authorization"));
     expect(new Set(authorizations).size).toBe(2);
   });
@@ -303,21 +312,22 @@ describe("worker output token policy", () => {
   it("uses the context-aware default for a 128K model", async () => {
     const { env, run } = createEnv();
     await worker.fetch(textRequestFor("@cf/zai-org/glm-4.7-flash"), env as never);
-    expect(run.mock.calls[0][1]).toEqual(expect.objectContaining({ max_tokens: 8_192 }));
+    expect(run.mock.calls.at(-1)?.[1]).toEqual(expect.objectContaining({ max_tokens: 8_192 }));
   });
 
   it("allows a larger bounded output for a 1M model", async () => {
     const { env, run } = createEnv();
     await worker.fetch(textRequestFor("@cf/deepseek-ai/deepseek-v4-pro-0813", 999_999), env as never);
-    expect(run.mock.calls[0][1]).toEqual(expect.objectContaining({ max_tokens: 65_536 }));
+    expect(run.mock.calls.at(-1)?.[1]).toEqual(expect.objectContaining({ max_tokens: 65_536 }));
   });
 });
 
 describe("image generation function calling", () => {
   it("passes ordinary tool-model replies through the native stream", async () => {
     let finishStream: (() => void) | undefined;
-    const run = vi.fn(async (_model: string, input: Record<string, unknown>) =>
-      new ReadableStream({
+    const run = vi.fn(async (_model: string, input: Record<string, unknown>) => {
+      if (input.tools) return { response: "NO_IMAGE_TOOL" };
+      return new ReadableStream({
         start(controller) {
           controller.enqueue(new TextEncoder().encode('data: {"response":"第一段"}\n\n'));
           finishStream = () => {
@@ -325,8 +335,8 @@ describe("image generation function calling", () => {
             controller.close();
           };
         },
-      }),
-    );
+      });
+    });
     const env = {
       AI: { run, toMarkdown: vi.fn() },
       ASSETS: { fetch: vi.fn() },
@@ -347,9 +357,14 @@ describe("image generation function calling", () => {
 
     expect(new TextDecoder().decode(first.value)).toContain("第一段");
     expect(first.done).toBe(false);
-    expect(run).toHaveBeenCalledOnce();
-    expect(run.mock.calls[0][1]).toEqual(expect.objectContaining({ stream: true }));
-    expect(run.mock.calls[0][1]).not.toHaveProperty("tools");
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(run.mock.calls[0][1]).toEqual(expect.objectContaining({
+      stream: false,
+      tool_choice: "auto",
+    }));
+    expect(run.mock.calls[0][1]).toHaveProperty("tools");
+    expect(run.mock.calls[1][1]).toEqual(expect.objectContaining({ stream: true }));
+    expect(run.mock.calls[1][1]).not.toHaveProperty("tools");
 
     finishStream?.();
     await reader.cancel();
@@ -609,13 +624,13 @@ describe("image generation function calling", () => {
     await expect(response.json()).resolves.toMatchObject({ error: { code: "invalid_image_model" } });
   });
 
-  it("uses a required tool call for a referential image follow-up", async () => {
+  it("uses an automatic semantic tool call for a non-keyword image follow-up", async () => {
     const calls: Array<{ model: string; input: Record<string, unknown> }> = [];
     const ai = {
       run: vi.fn(async (model: string, input: Record<string, unknown>) => {
         calls.push({ model, input });
         if (model === imageModel) return { image: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB" };
-        if (input.tool_choice === "required") {
+        if (input.tool_choice === "auto") {
           return {
             choices: [{
               message: {
@@ -663,7 +678,7 @@ describe("image generation function calling", () => {
         messages: [
           { role: "user", content: "画一张秋日街拍" },
           { role: "assistant", content: "上一张已经完成。" },
-          { role: "user", content: "再来一张" },
+          { role: "user", content: "让它有那种雨后老电影的感觉" },
         ],
       }),
     });
@@ -672,7 +687,7 @@ describe("image generation function calling", () => {
     const body = await response.text();
 
     expect(calls.map((call) => call.model)).toEqual([chatModel, imageModel, chatModel]);
-    expect(calls[0].input.tool_choice).toBe("required");
+    expect(calls[0].input.tool_choice).toBe("auto");
     expect(JSON.stringify(calls[0].input.messages)).toContain("referential follow-up");
     expect(body).toContain('"status":"generating"');
     expect(body).toContain('"generated_image"');
@@ -684,7 +699,7 @@ describe("image generation function calling", () => {
       run: vi.fn(async (model: string, input: Record<string, unknown>) => {
         calls.push({ model, input });
         if (model === imageModel) return { image: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB" };
-        if (input.tool_choice === "required") {
+        if (input.tool_choice === "auto") {
           return {
             choices: [{
               message: {
@@ -748,7 +763,7 @@ describe("image generation function calling", () => {
     const body = await response.text();
 
     expect(calls.map((call) => call.model)).toEqual([chatModel, imageModel, chatModel]);
-    expect(calls[0].input.tool_choice).toBe("required");
+    expect(calls[0].input.tool_choice).toBe("auto");
     expect(JSON.stringify(calls[0].input.messages)).toContain("An adorable fluffy orange cat");
     expect(JSON.stringify(calls[2].input.messages)).not.toContain("Internal application context");
     expect(JSON.stringify(calls[2].input.messages)).not.toContain("Retained image-tool context");
@@ -762,7 +777,7 @@ describe("image generation function calling", () => {
       run: vi.fn(async (model: string, input: Record<string, unknown>) => {
         calls.push({ model, input });
         if (model === imageModel) return { image: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB" };
-        if (input.tool_choice === "required") {
+        if (input.tool_choice === "auto") {
           return {
             choices: [{
               message: {
@@ -826,18 +841,19 @@ describe("image generation function calling", () => {
     const body = await response.text();
 
     expect(calls.map((call) => call.model)).toEqual([glm53Model, imageModel, glm53Model]);
-    expect(calls[0].input.tool_choice).toBe("required");
+    expect(calls[0].input.tool_choice).toBe("auto");
     expect(JSON.stringify(calls[0].input.messages)).toContain("An adorable fluffy cat in warm sunlight");
     expect(body).toContain('"status":"generating"');
     expect(body).toContain('"generated_image"');
     expect(body).toContain("已按 iPhone 拍摄风格重新生成。");
   });
-  it("keeps questions about a prior image in ordinary chat", async () => {
+  it("trusts the AI no-tool decision over fallback wording", async () => {
     const glm53Model = "@cf/zai-org/glm-5.3-flash";
     const calls: Array<{ model: string; input: Record<string, unknown> }> = [];
     const ai = {
       run: vi.fn(async (model: string, input: Record<string, unknown>) => {
         calls.push({ model, input });
+        if (input.tools) return { response: "NO_IMAGE_TOOL" };
         return new ReadableStream({
           start(controller) {
             controller.enqueue(new TextEncoder().encode('data: {"response":"这是自然光摄影风格。"}\n\ndata: [DONE]\n\n'));
@@ -874,7 +890,7 @@ describe("image generation function calling", () => {
               height: 1024,
             },
           },
-          { role: "user", content: "这是什么风格？" },
+          { role: "user", content: "“改为 iPhone 拍摄风格”是什么意思？" },
         ],
       }),
     });
@@ -882,9 +898,12 @@ describe("image generation function calling", () => {
     const response = await worker.fetch(request, env as never);
     const body = await response.text();
 
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2);
     expect(calls[0].model).toBe(glm53Model);
-    expect(calls[0].input.tools).toBeUndefined();
+    expect(calls[0].input.tool_choice).toBe("auto");
+    expect(calls[0].input.tools).toBeTruthy();
+    expect(calls[1].input.tools).toBeUndefined();
+    expect(calls[1].input.stream).toBe(true);
     expect(body).not.toContain('"generated_image"');
     expect(body).toContain("这是自然光摄影风格。");
   });

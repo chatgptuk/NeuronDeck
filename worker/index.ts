@@ -885,7 +885,7 @@ const retainedImageContextMessage = (context: RetainedImageContext) => ({
     JSON.stringify(context),
 });
 
-const hasImageGenerationIntent = (
+const hasImageGenerationFallbackHint = (
   messages: ReturnType<typeof buildAiMessages>["messages"],
   retainedImageContext?: RetainedImageContext,
 ): boolean => {
@@ -993,15 +993,34 @@ const handleToolChat = (
         if (!cancelled) controller.enqueue(encodeSse(payload));
       };
       const sendImageState = (state: ImageGenerationState) => send({ image_generation: state });
+      const forwardModelResult = async (result: unknown) => {
+        if (result instanceof ReadableStream) {
+          const reader = result.getReader();
+          while (!cancelled) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            controller.enqueue(coerceBytes(value));
+          }
+          if (cancelled) await reader.cancel();
+          return;
+        }
+        const completion = extractCompletion(result);
+        if (completion.reasoning) send({ reasoning: completion.reasoning });
+        send({ response: completion.content });
+        if (completion.usage) send({ usage: completion.usage });
+        send({ done: true });
+      };
       const toolMessages = [
         {
           role: "system",
           content:
+            "Act only as a semantic tool router, not as a conversational assistant. " +
             "You have a working generate_image tool connected to a real image model. " +
-            "Use it whenever the user's semantic intent is to create a new visual, even when they do not say the exact words 'generate an image'. " +
+            "Call it whenever the user's semantic intent is to create a new visual, even when they do not say the exact words 'generate an image'. " +
             "A referential follow-up asking for another result, a variation, a remake, or a changed version of a previously generated visual is also creation intent; infer a self-contained prompt from the conversation and retained image-tool context. " +
-            "Never state or imply that an image was created unless generate_image was called successfully in the current turn. " +
-            "Never claim you cannot generate images when creation intent is present. Do not call the tool for ordinary questions or image analysis.",
+            "Do not call it for ordinary questions, coding requests, or analysis of an existing image. " +
+            "When no tool is needed, reply with exactly NO_IMAGE_TOOL and nothing else. " +
+            "Never answer the user's request or claim an image was created during this routing step.",
         },
         ...(retainedImageContext ? [retainedImageContextMessage(retainedImageContext)] : []),
         ...messages,
@@ -1084,14 +1103,36 @@ const handleToolChat = (
         const decision = await ai.run(modelId, {
           messages: toolMessages,
           tools: [imageToolDefinition],
-          tool_choice: "required",
+          tool_choice: "auto",
           parallel_tool_calls: false,
-          temperature,
-          max_tokens: maxTokens,
+          temperature: 0,
+          max_tokens: Math.min(maxTokens, 1_024),
           stream: false,
         });
         const fallbackArguments = fallbackImageArguments(messages, retainedImageContext);
         const extractedImageCall = extractToolCalls(decision).find((call) => call.name === "generate_image");
+        const routerDeclinedImage = /^NO_IMAGE_TOOL[.!]?$/i.test(extractCompletion(decision).content.trim());
+        const useFallback = !extractedImageCall &&
+          !routerDeclinedImage &&
+          hasImageGenerationFallbackHint(messages, retainedImageContext);
+
+        if (!extractedImageCall && !useFallback) {
+          if (decision instanceof ReadableStream) await decision.cancel().catch(() => undefined);
+          const chatMessages = [
+            ...(retainedImageContext ? [retainedImageContextMessage(retainedImageContext)] : []),
+            ...messages,
+          ];
+          const passthroughResult = await ai.run(modelId, {
+            messages: chatMessages,
+            temperature,
+            max_tokens: maxTokens,
+            stream: true,
+          });
+          await forwardModelResult(passthroughResult);
+          if (!cancelled) controller.close();
+          return;
+        }
+
         const toolCalls: NormalizedToolCall[] = [{
           id: extractedImageCall?.id ?? `call_fallback_${crypto.randomUUID()}`,
           name: "generate_image",
@@ -1153,21 +1194,7 @@ const handleToolChat = (
           max_tokens: maxTokens,
           stream: true,
         });
-        if (finalResult instanceof ReadableStream) {
-          const reader = finalResult.getReader();
-          while (!cancelled) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            controller.enqueue(coerceBytes(value));
-          }
-          if (cancelled) await reader.cancel();
-        } else {
-          const completion = extractCompletion(finalResult);
-          if (completion.reasoning) send({ reasoning: completion.reasoning });
-          send({ response: completion.content });
-          if (completion.usage) send({ usage: completion.usage });
-          send({ done: true });
-        }
+        await forwardModelResult(finalResult);
         if (!cancelled) controller.close();
       } catch (error) {
         console.error("Workers AI function calling failed", {
@@ -1242,7 +1269,7 @@ const handleChat = async (request: Request, env: Env): Promise<Response> => {
   const resolvedAi = await resolveAiForRequest(request, env);
   if (!resolvedAi.ok) return resolvedAi.response;
 
-  if (supportsTools && hasImageGenerationIntent(builtInput.messages, builtInput.retainedImageContext)) {
+  if (supportsTools) {
     return handleToolChat(
       request,
       env,
