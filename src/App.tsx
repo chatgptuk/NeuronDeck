@@ -214,6 +214,7 @@ function App() {
   const [cloudflareAuth, setCloudflareAuth] = useState<CloudflareAuthStatus>({
     configured: false,
     authenticated: false,
+    publicPoolConfigured: false,
     accounts: [],
   });
   const [cloudflareAuthBusy, setCloudflareAuthBusy] = useState(true);
@@ -237,6 +238,10 @@ function App() {
   const activeModelSupportsTools = activeModel.capabilities.includes("tools");
   const activeImageModel = getImageModel(activeConversation.imageModelId);
   const activeOutputTokenPolicy = getOutputTokenPolicy(activeModel.contextWindow);
+  const siteQuotaLabel = cloudflareAuth.publicPoolConfigured ? t.cloudflarePublicPool : t.cloudflareSiteQuota;
+  const siteQuotaDescription = cloudflareAuth.publicPoolConfigured
+    ? t.cloudflarePublicPoolDescription
+    : t.cloudflareAccountDescription;
   const attachmentTarget = `${activeConversation.id}:${activeModel.id}`;
   const attachmentTargetRef = useRef(attachmentTarget);
   attachmentTargetRef.current = attachmentTarget;
@@ -1048,11 +1053,11 @@ function App() {
               className={cloudflareAuth.authenticated ? "cloud-account-button connected" : "cloud-account-button"}
               onClick={() => setInspectorOpen(true)}
               aria-label={t.cloudflareAccount}
-              title={cloudflareAuth.authenticated ? cloudflareAuth.activeAccountName : t.cloudflareSiteQuota}
+              title={cloudflareAuth.authenticated ? cloudflareAuth.activeAccountName : siteQuotaLabel}
               type="button"
             >
               <Cloud size={17} />
-              <span>{cloudflareAuth.authenticated ? cloudflareAuth.activeAccountName : t.cloudflareSiteQuota}</span>
+              <span>{cloudflareAuth.authenticated ? cloudflareAuth.activeAccountName : siteQuotaLabel}</span>
             </button>
             <button
               className="language-toggle"
@@ -1296,8 +1301,8 @@ function App() {
                 <div className="cloudflare-account-heading">
                   <span className="cloudflare-mark"><Cloud size={18} /></span>
                   <div>
-                    <strong>{cloudflareAuth.authenticated ? cloudflareAuth.activeAccountName : t.cloudflareSiteQuota}</strong>
-                    <span>{cloudflareAuth.authenticated ? t.cloudflareConnected : t.cloudflareAccountDescription}</span>
+                    <strong>{cloudflareAuth.authenticated ? cloudflareAuth.activeAccountName : siteQuotaLabel}</strong>
+                    <span>{cloudflareAuth.authenticated ? t.cloudflareConnected : siteQuotaDescription}</span>
                   </div>
                 </div>
                 {cloudflareAuth.authenticated ? (

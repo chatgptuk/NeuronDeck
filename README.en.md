@@ -33,6 +33,7 @@ NeuronDeck brings Cloudflare-hosted chat models, multimodal input, image generat
 - Cloudflare Workflows and R2 for long-running image jobs that can recover after backgrounding or refresh
 - Model-aware output token limits, plus per-conversation system prompts, temperature, and output controls
 - Browser-local IndexedDB history, mobile refinements, message timestamps, and generation duration
+- Optional public quota pool with stable distribution and automatic failover across administrator-provided Cloudflare accounts
 - Optional Cloudflare OAuth so users can authorize their own accounts and use their own Workers AI quota
 - Same-origin API checks, request validation, encrypted OAuth sessions, and per-minute rate limiting
 
@@ -43,6 +44,41 @@ Select **Deploy to Cloudflare** above, then sign in to Cloudflare and GitHub to 
 By default, the deployed Worker consumes Workers AI quota from the **Cloudflare account that owns the Worker**. User-facing Cloudflare OAuth is not enabled automatically because every deployment needs its own OAuth client, callback domain, and session secret.
 
 Cloudflare documentation: [Deploy to Cloudflare buttons](https://developers.cloudflare.com/workers/platform/deploy-buttons/) · [Wrangler automatic provisioning](https://developers.cloudflare.com/workers/wrangler/configuration/#automatic-provisioning)
+
+### Optional: configure a public site quota pool
+
+An administrator can provide up to 16 Cloudflare accounts for anonymous visitors. Chat, file conversion, Function Calling, and background image jobs all use the same pool. A browser is assigned a stable starting entry, and the Worker automatically fails over when an account returns an authorization, quota, capacity, or server error. A user who connects their own Cloudflare account always uses their own quota first.
+
+1. In each Cloudflare account, open Workers AI and select **Use REST API → Create a Workers AI API Token**. For a custom token, grant only `Workers AI Read` and `Workers AI Edit` on that account. Never use a Global API Key.
+
+2. Store the following JSON as a Worker Secret named `PUBLIC_AI_ACCOUNTS`. Never put real tokens in Wrangler configuration, `.env`, README, or Git:
+
+   ```json
+   {
+     "accounts": [
+       {
+         "accountId": "32-character Cloudflare Account ID",
+         "apiToken": "Cloudflare Workers AI API Token"
+       },
+       {
+         "accountId": "another Account ID",
+         "apiToken": "another API Token"
+       }
+     ]
+   }
+   ```
+
+3. Use Wrangler's hidden prompt to store the Secret safely:
+
+   ```bash
+   wrangler secret put PUBLIC_AI_ACCOUNTS --config .wrangler.production.jsonc
+   ```
+
+   Use `wrangler.jsonc` instead when deploying the public template. Deleting this Secret disables the pool and returns anonymous traffic to the owning account's AI binding.
+
+The pool has an additional limit of 60 requests per minute in each Cloudflare location, while the existing 10 requests per visitor per minute remains in force. An invalid Secret fails closed instead of silently charging the Worker owner's account. Cloudflare limits an individual Secret/environment variable to 5 KB.
+
+Cloudflare documentation: [Workers AI REST API](https://developers.cloudflare.com/workers-ai/get-started/rest-api/) · [Worker Secrets](https://developers.cloudflare.com/workers/configuration/secrets/) · [Worker environment variable limits](https://developers.cloudflare.com/workers/platform/limits/#environment-variables)
 
 ### Optional: enable Cloudflare account sign-in
 
@@ -133,7 +169,7 @@ Browser
                     ▼
 Cloudflare Worker
 ├── model allowlist, input validation, and genuine SSE forwarding
-├── Workers AI binding / user-authorized Workers AI REST API
+├── Workers AI binding / public credential pool / user-authorized REST API
 ├── Function Calling and image-generation Workflow
 ├── encrypted OAuth KV · R2 image results · Rate Limiting
 └── Workers Static Assets

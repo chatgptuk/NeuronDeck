@@ -1,9 +1,17 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import worker from "./index";
 
 const pixel = "data:image/png;base64,iVBORw0KGgo=";
 const chatModel = "@cf/zai-org/glm-4.7-flash";
 const imageModel = "@cf/black-forest-labs/flux-2-klein-9b";
+const publicPoolAccounts = [
+  { accountId: "1".repeat(32), apiToken: "a".repeat(40) },
+  { accountId: "2".repeat(32), apiToken: "b".repeat(40) },
+];
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 const createEnv = () => {
   const run = vi.fn(async (_model: string, _input: Record<string, unknown>) => ({ response: "ok" }));
@@ -63,7 +71,11 @@ describe("Cloudflare OAuth routes", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ configured: false, authenticated: false });
+    expect(await response.json()).toEqual({
+      configured: false,
+      authenticated: false,
+      publicPoolConfigured: false,
+    });
   });
 
   it("starts a PKCE authorization without exposing a client secret", async () => {
@@ -91,6 +103,162 @@ describe("Cloudflare OAuth routes", () => {
     expect(location.searchParams.get("scope")).toBe("ai.read account-settings.read offline_access");
     expect(response.headers.get("set-cookie")).toContain("HttpOnly");
     expect(put).toHaveBeenCalledOnce();
+  });
+});
+
+describe("public Cloudflare AI account pool", () => {
+  it("uses server-side public credentials for anonymous streaming requests", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(
+      'data: {"response":"public pool"}\n\ndata: [DONE]\n\n',
+      { headers: { "content-type": "text/event-stream" } },
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    const { env, run } = createEnv();
+    const publicLimit = vi.fn(async () => ({ success: true }));
+    const response = await worker.fetch(textRequestFor(chatModel), {
+      ...env,
+      PUBLIC_AI_ACCOUNTS: JSON.stringify({ accounts: publicPoolAccounts }),
+      PUBLIC_AI_RATE_LIMITER: { limit: publicLimit },
+    } as never);
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(body).toContain("public pool");
+    expect(run).not.toHaveBeenCalled();
+    expect(publicLimit).toHaveBeenCalledWith({ key: "public-ai-pool" });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, init] = fetchMock.mock.calls[0];
+    const authorization = new Headers(init?.headers).get("authorization");
+    expect(publicPoolAccounts.some((account) => String(url).includes(`/accounts/${account.accountId}/ai/run/`))).toBe(true);
+    expect(publicPoolAccounts.some((account) => authorization === `Bearer ${account.apiToken}`)).toBe(true);
+    expect(body).not.toContain(publicPoolAccounts[0].accountId);
+    expect(body).not.toContain(publicPoolAccounts[0].apiToken);
+  });
+
+  it("fails over to the next public account on quota or authorization errors", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => fetchMock.mock.calls.length === 1
+      ? Response.json({ success: false, errors: [{ message: "quota exceeded" }] }, { status: 429 })
+      : new Response('data: {"response":"fallback"}\n\ndata: [DONE]\n\n', {
+          headers: { "content-type": "text/event-stream" },
+        }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { env } = createEnv();
+    const response = await worker.fetch(textRequestFor(chatModel), {
+      ...env,
+      PUBLIC_AI_ACCOUNTS: JSON.stringify({ accounts: publicPoolAccounts }),
+      PUBLIC_AI_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+    } as never);
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain("fallback");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const authorizations = fetchMock.mock.calls.map(([, init]) => new Headers(init?.headers).get("authorization"));
+    expect(new Set(authorizations).size).toBe(2);
+  });
+
+  it("fails closed instead of silently billing the Worker owner when the pool secret is invalid", async () => {
+    const { env, run } = createEnv();
+    const response = await worker.fetch(textRequestFor(chatModel), {
+      ...env,
+      PUBLIC_AI_ACCOUNTS: "{invalid-json",
+    } as never);
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "public_ai_pool_invalid" } });
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("reports public quota availability without exposing pool entries", async () => {
+    const { env } = createEnv();
+    const response = await worker.fetch(
+      new Request("https://ai.chatgpt.org.uk/api/auth/session"),
+      { ...env, PUBLIC_AI_ACCOUNTS: JSON.stringify({ accounts: publicPoolAccounts }) } as never,
+    );
+    const body = await response.text();
+
+    expect(JSON.parse(body)).toEqual({
+      configured: false,
+      authenticated: false,
+      publicPoolConfigured: true,
+    });
+    for (const account of publicPoolAccounts) {
+      expect(body).not.toContain(account.accountId);
+      expect(body).not.toContain(account.apiToken);
+    }
+  });
+
+  it("replays multipart image input safely when a public account fails over", async () => {
+    const multipartBodies: Uint8Array[] = [];
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const callNumber = fetchMock.mock.calls.length;
+      if (callNumber === 1) {
+        return Response.json({
+          success: true,
+          result: {
+            choices: [{
+              message: {
+                tool_calls: [{
+                  id: "pool-image-call",
+                  type: "function",
+                  function: {
+                    name: "generate_image",
+                    arguments: JSON.stringify({ prompt: "A green glass sphere", aspect_ratio: "square" }),
+                  },
+                }],
+              },
+            }],
+          },
+        });
+      }
+      if (callNumber === 2 || callNumber === 3) {
+        expect(ArrayBuffer.isView(init?.body)).toBe(true);
+        multipartBodies.push(new Uint8Array(
+          (init?.body as ArrayBufferView).buffer,
+          (init?.body as ArrayBufferView).byteOffset,
+          (init?.body as ArrayBufferView).byteLength,
+        ));
+      }
+      if (callNumber === 2) {
+        return Response.json({ success: false, errors: [{ message: "capacity limit" }] }, { status: 429 });
+      }
+      if (callNumber === 3) {
+        return new Response(Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]), {
+          headers: { "content-type": "image/png" },
+        });
+      }
+      return new Response('data: {"response":"图片完成。"}\n\ndata: [DONE]\n\n', {
+        headers: { "content-type": "text/event-stream" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { env, run } = createEnv();
+    const request = new Request("https://ai.chatgpt.org.uk/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "accept-language": "zh-CN",
+        "x-neurondeck-client": "test-client-1234",
+      },
+      body: JSON.stringify({
+        model: chatModel,
+        imageModel,
+        messages: [{ role: "user", content: "生成一张绿色玻璃球图片" }],
+      }),
+    });
+    const response = await worker.fetch(request, {
+      ...env,
+      PUBLIC_AI_ACCOUNTS: JSON.stringify({ accounts: publicPoolAccounts }),
+      PUBLIC_AI_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+    } as never);
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(run).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(multipartBodies).toHaveLength(2);
+    expect([...multipartBodies[1]]).toEqual([...multipartBodies[0]]);
+    expect(body).toContain('"generated_image"');
+    expect(body).toContain("data:image/png;base64");
   });
 });
 
@@ -335,6 +503,89 @@ describe("image generation function calling", () => {
     expect(body).toContain('"modelId":"@cf/black-forest-labs/flux-2-dev"');
     expect(body).toMatch(/"dataUrl":"\/api\/image-jobs\/[0-9a-f-]+\/image\.png\?token=[a-f0-9]+"/);
     expect(body).toContain('"elapsedMs":95000');
+  });
+
+  it("passes only an opaque pool seed to FLUX.2 Dev workflows", async () => {
+    const devModel = "@cf/black-forest-labs/flux-2-dev";
+    const publicAccount = publicPoolAccounts[0];
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
+      if (fetchMock.mock.calls.length === 1) {
+        return Response.json({
+          success: true,
+          result: {
+            choices: [{
+              message: {
+                tool_calls: [{
+                  id: "public-dev-image-call",
+                  type: "function",
+                  function: {
+                    name: "generate_image",
+                    arguments: JSON.stringify({ prompt: "A public pool lake", aspect_ratio: "square" }),
+                  },
+                }],
+              },
+            }],
+          },
+        });
+      }
+      return new Response('data: {"response":"公共池图片完成。"}\n\ndata: [DONE]\n\n', {
+        headers: { "content-type": "text/event-stream" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const create = vi.fn(async (options: { id: string; params: Record<string, string | undefined> }) => ({
+      id: options.id,
+      status: vi.fn(async () => ({
+        status: "complete",
+        output: {
+          ...options.params,
+          elapsedMs: 80_000,
+          height: 1024,
+          mimeType: "image/png",
+          modelName: "FLUX.2 Dev",
+          objectKey: `image-jobs/${options.id}`,
+          seed: 9,
+          width: 1024,
+        },
+      })),
+    }));
+    const ownerRun = vi.fn();
+    const env = {
+      AI: { run: ownerRun, toMarkdown: vi.fn() },
+      ASSETS: { fetch: vi.fn() },
+      CHAT_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+      PUBLIC_AI_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+      PUBLIC_AI_ACCOUNTS: JSON.stringify({ accounts: [publicAccount] }),
+      IMAGE_WORKFLOW: { create, get: vi.fn() },
+      IMAGE_RESULTS: { get: vi.fn(), put: vi.fn() },
+    };
+    const request = new Request("https://ai.chatgpt.org.uk/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "accept-language": "zh-CN",
+        "x-neurondeck-client": "test-client-1234",
+      },
+      body: JSON.stringify({
+        model: chatModel,
+        imageModel: devModel,
+        messages: [{ role: "user", content: "生成一张公共池湖面图片" }],
+      }),
+    });
+
+    const response = await worker.fetch(request, env as never);
+    const body = await response.text();
+    const workflowParams = create.mock.calls[0][0].params;
+
+    expect(response.status).toBe(200);
+    expect(ownerRun).not.toHaveBeenCalled();
+    expect(workflowParams.publicPoolSeed).toBe("test-client-1234");
+    expect(workflowParams.oauthSessionId).toBeUndefined();
+    expect(JSON.stringify(workflowParams)).not.toContain(publicAccount.accountId);
+    expect(JSON.stringify(workflowParams)).not.toContain(publicAccount.apiToken);
+    expect(body).not.toContain(publicAccount.accountId);
+    expect(body).not.toContain(publicAccount.apiToken);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("rejects image model ids outside the curated Cloudflare-hosted list", async () => {

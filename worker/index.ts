@@ -4,7 +4,6 @@ import {
   getOAuthSessionById,
   handleOAuthRoute,
   type CloudflareOAuthEnv,
-  type OAuthSessionContext,
 } from "./cloudflare-oauth";
 import catalog from "../src/data/models.generated.json";
 import { buildAiMessages, parseApiMessages } from "../src/lib/chat-input";
@@ -16,6 +15,11 @@ import {
 } from "../src/lib/image-models";
 import { clampOutputTokens, getOutputTokenPolicyForModel } from "../src/lib/output-tokens";
 import type { GeneratedImage, ImageGenerationState } from "../src/types";
+import {
+  orderPublicAiAccounts,
+  readPublicAiPoolConfig,
+  type PublicAiAccountCredential,
+} from "./public-ai-pool";
 
 interface RateLimiter {
   limit(options: { key: string }): Promise<{ success: boolean }>;
@@ -27,6 +31,8 @@ interface Env extends CloudflareOAuthEnv {
   CHAT_RATE_LIMITER: RateLimiter;
   IMAGE_RESULTS: R2Bucket;
   IMAGE_WORKFLOW: Workflow<ImageWorkflowParams>;
+  PUBLIC_AI_ACCOUNTS?: string;
+  PUBLIC_AI_RATE_LIMITER?: RateLimiter;
 }
 
 interface ChatBody {
@@ -107,7 +113,19 @@ interface CloudflareApiEnvelope {
   errors?: Array<{ message?: string }>;
 }
 
-const createCloudflareRestAi = (context: OAuthSessionContext): WorkersAiBinding => {
+interface CloudflareRestCredentials {
+  accountId: string;
+  accessToken: string;
+}
+
+class CloudflareAiApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = "CloudflareAiApiError";
+  }
+}
+
+const createCloudflareRestAi = (context: CloudflareRestCredentials): WorkersAiBinding => {
   const request = async (path: string, init: RequestInit): Promise<Response> => {
     const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${context.accountId}${path}`, {
       ...init,
@@ -121,7 +139,7 @@ const createCloudflareRestAi = (context: OAuthSessionContext): WorkersAiBinding 
     const payload = await response.clone().json().catch(() => null) as CloudflareApiEnvelope | null;
     const message = payload?.errors?.find((error) => error.message)?.message
       || `Cloudflare API request failed with status ${response.status}.`;
-    throw new Error(message);
+    throw new CloudflareAiApiError(message, response.status);
   };
 
   return {
@@ -129,13 +147,19 @@ const createCloudflareRestAi = (context: OAuthSessionContext): WorkersAiBinding 
       const multipart = input.multipart && typeof input.multipart === "object"
         ? input.multipart as { body?: unknown; contentType?: unknown }
         : null;
+      const multipartBody = multipart?.body;
+      const hasMultipartBody = multipartBody instanceof ReadableStream ||
+        multipartBody instanceof ArrayBuffer ||
+        ArrayBuffer.isView(multipartBody) ||
+        multipartBody instanceof Blob ||
+        multipartBody instanceof FormData;
       const response = await request(`/ai/run/${model}`, {
         method: "POST",
-        headers: multipart && typeof multipart.contentType === "string"
+        headers: hasMultipartBody && typeof multipart?.contentType === "string"
           ? { "content-type": multipart.contentType }
           : { "content-type": "application/json", accept: "application/json, text/event-stream, image/*" },
-        body: multipart?.body instanceof ReadableStream
-          ? multipart.body
+        body: hasMultipartBody
+          ? multipartBody as BodyInit
           : JSON.stringify(input),
       });
       const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
@@ -165,13 +189,107 @@ const createCloudflareRestAi = (context: OAuthSessionContext): WorkersAiBinding 
   };
 };
 
+const isRetryablePoolError = (error: unknown): boolean => {
+  if (!(error instanceof Error)) return false;
+  if (error instanceof CloudflareAiApiError) {
+    if ([401, 402, 403, 408, 409, 425, 429].includes(error.status) || error.status >= 500) return true;
+  }
+  return /(?:billing|capacity|credit|limit|paid|quota|rate)/i.test(error.message);
+};
+
+const createRepeatableInput = async (
+  input: Record<string, unknown>,
+): Promise<() => Record<string, unknown>> => {
+  const multipart = input.multipart && typeof input.multipart === "object"
+    ? input.multipart as { body?: unknown; contentType?: unknown }
+    : null;
+  if (!(multipart?.body instanceof ReadableStream)) return () => input;
+
+  const bytes = new Uint8Array(await new Response(multipart.body).arrayBuffer());
+  return () => ({
+    ...input,
+    multipart: {
+      ...multipart,
+      body: bytes.slice(),
+    },
+  });
+};
+
+const createPublicAiPoolBinding = (
+  accounts: readonly PublicAiAccountCredential[],
+  seed: string,
+): WorkersAiBinding => {
+  const orderedAccounts = orderPublicAiAccounts(accounts, seed);
+  let activeIndex = 0;
+
+  const execute = async <T>(operation: (ai: WorkersAiBinding) => Promise<T>): Promise<T> => {
+    let lastError: unknown = new Error("The public Cloudflare AI pool is unavailable.");
+    for (let attempt = 0; attempt < orderedAccounts.length; attempt += 1) {
+      const accountIndex = (activeIndex + attempt) % orderedAccounts.length;
+      const account = orderedAccounts[accountIndex];
+      try {
+        const result = await operation(createCloudflareRestAi({
+          accountId: account.accountId,
+          accessToken: account.apiToken,
+        }));
+        activeIndex = accountIndex;
+        return result;
+      } catch (error) {
+        lastError = error;
+        if (!isRetryablePoolError(error) || attempt === orderedAccounts.length - 1) throw error;
+        console.warn("Public Cloudflare AI account failed; trying the next pool entry.", {
+          attempt: attempt + 1,
+          poolSize: orderedAccounts.length,
+          status: error instanceof CloudflareAiApiError ? error.status : undefined,
+        });
+      }
+    }
+    throw lastError;
+  };
+
+  return {
+    async run(model, input) {
+      const inputFactory = await createRepeatableInput(input);
+      return execute((ai) => ai.run(model, inputFactory()));
+    },
+    async toMarkdown(input) {
+      return execute((ai) => ai.toMarkdown(input));
+    },
+  };
+};
+
 type AiResolution =
-  | { ok: true; ai: WorkersAiBinding; oauthSessionId?: string }
+  | { ok: true; ai: WorkersAiBinding; oauthSessionId?: string; publicPoolSeed?: string }
   | { ok: false; response: Response };
 
 const resolveAiForRequest = async (request: Request, env: Env): Promise<AiResolution> => {
   const oauth = await getOAuthSession(request, env);
-  if (oauth.kind === "anonymous") return { ok: true, ai: env.AI as WorkersAiBinding };
+  if (oauth.kind === "anonymous") {
+    const pool = readPublicAiPoolConfig(env.PUBLIC_AI_ACCOUNTS);
+    if (pool.state === "invalid") {
+      console.error("Public Cloudflare AI pool configuration is invalid.", { message: pool.message });
+      return {
+        ok: false,
+        response: apiError("The site's public Cloudflare AI quota is temporarily unavailable.", 503, "public_ai_pool_invalid"),
+      };
+    }
+    if (pool.state === "ready") {
+      const publicLimit = await env.PUBLIC_AI_RATE_LIMITER?.limit({ key: "public-ai-pool" });
+      if (publicLimit && !publicLimit.success) {
+        return {
+          ok: false,
+          response: apiError("The site's public AI quota is busy. Please try again shortly.", 429, "public_ai_pool_busy"),
+        };
+      }
+      const publicPoolSeed = getClientId(request);
+      return {
+        ok: true,
+        ai: createPublicAiPoolBinding(pool.accounts, publicPoolSeed),
+        publicPoolSeed,
+      };
+    }
+    return { ok: true, ai: env.AI as WorkersAiBinding };
+  }
   if (oauth.kind === "invalid") {
     return { ok: false, response: apiError(oauth.message, 401, "oauth_expired") };
   }
@@ -196,6 +314,7 @@ interface ImageWorkflowParams {
   jobId: string;
   modelId: string;
   oauthSessionId?: string;
+  publicPoolSeed?: string;
   prompt: string;
 }
 
@@ -429,7 +548,7 @@ export class ImageGenerationWorkflow extends WorkflowEntrypoint<Env, ImageWorkfl
         timeout: "15 minutes",
       },
       async () => {
-        const { accessToken, aspectRatio, clientId, jobId, modelId, oauthSessionId, prompt } = event.payload;
+        const { accessToken, aspectRatio, clientId, jobId, modelId, oauthSessionId, publicPoolSeed, prompt } = event.payload;
         if (!isImageModelId(modelId)) throw new Error("Unsupported image model.");
         const model = getImageModel(modelId);
         const { width, height } = imageDimensions[aspectRatio];
@@ -440,6 +559,10 @@ export class ImageGenerationWorkflow extends WorkflowEntrypoint<Env, ImageWorkfl
           const oauth = await getOAuthSessionById(this.env, oauthSessionId);
           if (!oauth) throw new Error("Cloudflare authorization expired while the image job was running.");
           ai = createCloudflareRestAi(oauth);
+        } else if (publicPoolSeed) {
+          const pool = readPublicAiPoolConfig(this.env.PUBLIC_AI_ACCOUNTS);
+          if (pool.state !== "ready") throw new Error("The public Cloudflare AI pool is unavailable for this image job.");
+          ai = createPublicAiPoolBinding(pool.accounts, publicPoolSeed);
         }
         const result = await ai.run(
           model.id,
@@ -808,6 +931,7 @@ const handleToolChat = (
   env: Env,
   ai: WorkersAiBinding,
   oauthSessionId: string | undefined,
+  publicPoolSeed: string | undefined,
   modelId: string,
   messages: ReturnType<typeof buildAiMessages>["messages"],
   temperature: number,
@@ -879,6 +1003,7 @@ const handleToolChat = (
                 jobId,
                 modelId: imageModel.id,
                 oauthSessionId,
+                publicPoolSeed,
                 prompt,
               },
               retention: { successRetention: "1 day", errorRetention: "1 day" },
@@ -1070,6 +1195,7 @@ const handleChat = async (request: Request, env: Env): Promise<Response> => {
       env,
       resolvedAi.ai,
       resolvedAi.oauthSessionId,
+      resolvedAi.publicPoolSeed,
       body.model,
       builtInput.messages,
       temperature,

@@ -1,3 +1,5 @@
+import { readPublicAiPoolConfig } from "./public-ai-pool";
+
 const AUTHORIZE_ENDPOINT = "https://dash.cloudflare.com/oauth2/auth";
 const TOKEN_ENDPOINT = "https://dash.cloudflare.com/oauth2/token";
 const REVOKE_ENDPOINT = "https://dash.cloudflare.com/oauth2/revoke";
@@ -12,6 +14,7 @@ export interface CloudflareOAuthEnv {
   CLOUDFLARE_OAUTH_CLIENT_ID?: string;
   CLOUDFLARE_OAUTH_SCOPES?: string;
   OAUTH_SESSION_SECRET?: string;
+  PUBLIC_AI_ACCOUNTS?: string;
 }
 
 export interface CloudflareAccount {
@@ -368,9 +371,17 @@ const finishAuthorization = async (request: Request, env: CloudflareOAuthEnv): P
 
 const sessionStatus = async (request: Request, env: CloudflareOAuthEnv): Promise<Response> => {
   const lookup = await getOAuthSession(request, env);
-  if (lookup.kind === "anonymous") return json({ configured: isConfigured(env), authenticated: false });
+  const publicPoolConfigured = readPublicAiPoolConfig(env.PUBLIC_AI_ACCOUNTS).state === "ready";
+  if (lookup.kind === "anonymous") {
+    return json({ configured: isConfigured(env), authenticated: false, publicPoolConfigured });
+  }
   if (lookup.kind === "invalid") {
-    const response = json({ configured: isConfigured(env), authenticated: false, error: lookup.message });
+    const response = json({
+      configured: isConfigured(env),
+      authenticated: false,
+      publicPoolConfigured,
+      error: lookup.message,
+    });
     response.headers.append("set-cookie", sessionCookie("", 0));
     return response;
   }
@@ -378,6 +389,7 @@ const sessionStatus = async (request: Request, env: CloudflareOAuthEnv): Promise
   return json({
     configured: true,
     authenticated: true,
+    publicPoolConfigured,
     accounts: lookup.context.accounts,
     activeAccountId: lookup.context.accountId,
     activeAccountName: activeAccount?.name || lookup.context.accountId,

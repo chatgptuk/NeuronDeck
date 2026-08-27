@@ -33,6 +33,7 @@ NeuronDeck 把 Cloudflare 托管的对话模型、多模态输入、图片生成
 - 使用 Cloudflare Workflows 与 R2 承接耗时生图任务，切到后台或刷新后仍可恢复结果
 - 根据模型能力设置合理的最大输出 Token，并提供对话级系统提示词、温度与输出上限
 - IndexedDB 本地对话历史、移动端优化、消息时间与生成耗时
+- 可选站点公共额度池：管理员可安全接入多个 Cloudflare 账户，自动分流并在额度故障时切换
 - 可选 Cloudflare OAuth：用户可授权自己的账户并使用自己的 Workers AI 额度
 - 同源 API 校验、请求验证、加密 OAuth 会话与每分钟请求限制
 
@@ -43,6 +44,41 @@ NeuronDeck 把 Cloudflare 托管的对话模型、多模态输入、图片生成
 一键部署后的默认模式会使用 **Worker 所属 Cloudflare 账户** 的 Workers AI 额度。Cloudflare OAuth 用户登录不会自动启用，因为每个部署都必须拥有自己的 OAuth 客户端、回调域名与会话密钥。
 
 Cloudflare 文档：[Deploy to Cloudflare 按钮](https://developers.cloudflare.com/workers/platform/deploy-buttons/) · [Wrangler 自动配置资源](https://developers.cloudflare.com/workers/wrangler/configuration/#automatic-provisioning)
+
+### 可选：配置站点公共额度池
+
+管理员可以提供最多 16 个 Cloudflare 账户供匿名访客公开使用。聊天、文件转换、Function Calling 与后台生图都会使用同一额度池；相同浏览器会稳定分配到同一入口，遇到鉴权、额度、容量或服务端错误时自动切换到下一账户。用户连接自己的 Cloudflare 账户后，始终优先使用用户自己的额度。
+
+1. 在每个 Cloudflare 账户的 Workers AI 页面选择 **Use REST API → Create a Workers AI API Token**。如需自定义 Token，请仅授予该账户的 `Workers AI Read` 与 `Workers AI Edit` 权限；不要使用 Global API Key。
+
+2. 将以下 JSON 填入名为 `PUBLIC_AI_ACCOUNTS` 的 Worker Secret。真实 Token 不要写入 Wrangler 配置、`.env`、README 或 Git：
+
+   ```json
+   {
+     "accounts": [
+       {
+         "accountId": "32 位 Cloudflare Account ID",
+         "apiToken": "Cloudflare Workers AI API Token"
+       },
+       {
+         "accountId": "另一个 Account ID",
+         "apiToken": "另一个 API Token"
+       }
+     ]
+   }
+   ```
+
+3. 使用 Wrangler 的隐藏输入安全写入 Secret：
+
+   ```bash
+   wrangler secret put PUBLIC_AI_ACCOUNTS --config .wrangler.production.jsonc
+   ```
+
+   使用公开模板时，将配置路径换成 `wrangler.jsonc`。删除这个 Secret 即可停用额度池并恢复使用 Worker 所属账户的 AI Binding。
+
+公共池在每个 Cloudflare 边缘位置额外受每分钟 60 次的池级限流保护，每位访客仍受每分钟 10 次限制。Secret 格式不合法时服务会拒绝匿名 AI 请求，不会静默消耗主站账户额度。Cloudflare 对单个 Secret/环境变量限制为 5 KB。
+
+Cloudflare 文档：[Workers AI REST API](https://developers.cloudflare.com/workers-ai/get-started/rest-api/) · [Worker Secrets](https://developers.cloudflare.com/workers/configuration/secrets/) · [Worker 环境变量限制](https://developers.cloudflare.com/workers/platform/limits/#environment-variables)
 
 ### 可选：启用 Cloudflare 账户登录
 
@@ -133,7 +169,7 @@ node scripts/sync-models.mjs
                     ▼
 Cloudflare Worker
 ├── 模型白名单、输入校验与真正的 SSE 转发
-├── Workers AI Binding / 用户授权后的 Workers AI REST API
+├── Workers AI Binding / 公共凭证池 / 用户授权后的 REST API
 ├── Function Calling 与图片生成 Workflow
 ├── KV 加密 OAuth 会话 · R2 图片结果 · Rate Limiting
 └── Workers Static Assets

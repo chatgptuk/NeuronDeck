@@ -6,6 +6,7 @@ export interface CloudflareAccount {
 export interface CloudflareAuthStatus {
   configured: boolean;
   authenticated: boolean;
+  publicPoolConfigured: boolean;
   accounts: CloudflareAccount[];
   activeAccountId?: string;
   activeAccountName?: string;
@@ -28,6 +29,7 @@ export const getCloudflareAuthStatus = async (): Promise<CloudflareAuthStatus> =
   return {
     configured: status.configured === true,
     authenticated: status.authenticated === true,
+    publicPoolConfigured: status.publicPoolConfigured === true,
     accounts: Array.isArray(status.accounts) ? status.accounts : [],
     activeAccountId: status.activeAccountId,
     activeAccountName: status.activeAccountName,
