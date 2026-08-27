@@ -366,7 +366,8 @@ function App() {
   }, [language, t.htmlLang]);
 
   useEffect(() => {
-    void fetch("/api/models")
+    const catalogUrl = `/api/models?catalog=${encodeURIComponent(CATALOG_SYNCED_AT)}`;
+    void fetch(catalogUrl, { cache: "no-store" })
       .then(async (response) => {
         if (!response.ok) throw new Error(t.modelCatalogUnavailable);
         return response.json() as Promise<{ models: ModelInfo[]; syncedAt: string }>;
