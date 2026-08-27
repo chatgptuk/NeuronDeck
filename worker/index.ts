@@ -1,4 +1,4 @@
-import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
+import { tracing, WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { NonRetryableError } from "cloudflare:workflows";
 import {
   getOAuthSession,
@@ -55,6 +55,7 @@ interface ChatBody {
   temperature?: unknown;
   maxTokens?: unknown;
   imageModel?: unknown;
+  conversationId?: unknown;
 }
 
 interface TtsBody {
@@ -70,12 +71,41 @@ const visionModelIds = new Set(
 const toolModelIds = new Set(
   catalog.models.filter((model) => (model.capabilities as string[]).includes("tools")).map((model) => model.id),
 );
+const AGENT_NAME = "neurondeck-chat";
+const AGENT_ID = "neurondeck-production";
+const conversationIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const LEGACY_VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct";
 const MAX_CONVERT_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_CONVERTED_CHARACTERS = 40_000;
 const convertibleExtensions = new Set([
   "pdf", "html", "htm", "xml", "xlsx", "xlsm", "xlsb", "xls", "et", "docx", "ods", "odt", "numbers",
 ]);
+
+const setAgentIdentity = (
+  span: Span,
+  operation: "invoke_agent" | "chat",
+  conversationId: string,
+): void => {
+  span.setAttributes({
+    "gen_ai.operation.name": operation,
+    "gen_ai.agent.name": AGENT_NAME,
+    "gen_ai.agent.id": AGENT_ID,
+    "gen_ai.conversation.id": conversationId,
+    "neurondeck.payload_recording": false,
+  });
+};
+
+const setSpanOutcome = (
+  span: Span | undefined,
+  outcome: "complete" | "cancelled" | "error",
+  error?: unknown,
+): void => {
+  if (!span) return;
+  span.setAttribute("neurondeck.outcome", outcome);
+  if (error !== undefined) {
+    span.setAttribute("error.type", error instanceof Error ? error.name : "Error");
+  }
+};
 
 const json = (data: unknown, init: ResponseInit = {}): Response => {
   const headers = new Headers(init.headers);
@@ -1012,6 +1042,23 @@ interface StreamingToolCallFragment {
 const asRecord = (value: unknown): Record<string, unknown> | undefined =>
   value && typeof value === "object" ? value as Record<string, unknown> : undefined;
 
+const setTokenUsage = (span: Span, usage: unknown): void => {
+  const data = asRecord(usage);
+  if (!data) return;
+  const inputTokens = typeof data.input_tokens === "number"
+    ? data.input_tokens
+    : typeof data.prompt_tokens === "number"
+      ? data.prompt_tokens
+      : undefined;
+  const outputTokens = typeof data.output_tokens === "number"
+    ? data.output_tokens
+    : typeof data.completion_tokens === "number"
+      ? data.completion_tokens
+      : undefined;
+  if (inputTokens !== undefined) span.setAttribute("gen_ai.usage.input_tokens", inputTokens);
+  if (outputTokens !== undefined) span.setAttribute("gen_ai.usage.output_tokens", outputTokens);
+};
+
 const readToolCallArray = (value: unknown, legacy: boolean): StreamingToolCallFragment[] => {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item, arrayIndex) => {
@@ -1143,6 +1190,48 @@ const extractModelStreamEvent = (value: unknown): ModelStreamEvent => {
   };
 };
 
+const createTokenUsageObserver = (span: Span) => {
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  const consumeBlock = (block: string) => {
+    const dataText = block
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n");
+    if (!dataText || dataText === "[DONE]") return;
+    try {
+      const event = extractModelStreamEvent(JSON.parse(dataText));
+      if (event.usage) setTokenUsage(span, event.usage);
+    } catch {
+      // The upstream stream is still forwarded unchanged when a chunk is not JSON SSE.
+    }
+  };
+
+  const drain = (flush: boolean) => {
+    const blocks = buffer.split(/\r?\n\r?\n/);
+    buffer = blocks.pop() ?? "";
+    if (flush && buffer.trim()) {
+      blocks.push(buffer);
+      buffer = "";
+    }
+    for (const block of blocks) consumeBlock(block);
+    if (buffer.length > 65_536) buffer = buffer.slice(-8_192);
+  };
+
+  return {
+    push(chunk: Uint8Array) {
+      buffer += decoder.decode(chunk, { stream: true });
+      drain(false);
+    },
+    finish() {
+      buffer += decoder.decode();
+      drain(true);
+    },
+  };
+};
+
 const consumeToolAwareModelStream = async (
   stream: ReadableStream,
   onEvent: (event: ModelStreamEvent) => void,
@@ -1233,6 +1322,7 @@ const handleToolChat = (
   temperature: number,
   maxTokens: number,
   imageModelId: string,
+  conversationId: string,
 ): Response => {
   const imageModel = getImageModel(imageModelId);
   const prefersChinese = request.headers.get("accept-language")?.toLowerCase().startsWith("zh") ?? false;
@@ -1243,6 +1333,9 @@ const handleToolChat = (
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
+      await tracing.enterSpan("invoke_agent", async (invokeSpan) => {
+        setAgentIdentity(invokeSpan, "invoke_agent", conversationId);
+        invokeSpan.setAttribute("gen_ai.request.model", modelId);
       const send = (payload: unknown) => {
         if (!cancelled) controller.enqueue(encodeSse(payload));
       };
@@ -1375,50 +1468,86 @@ const handleToolChat = (
           max_tokens: maxTokens,
           stream: true,
         };
-        let modelResult: unknown;
-        try {
-          modelResult = await ai.run(modelId, unifiedInput);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "";
-          const incompatibleStreamingTools = /(?:tool.{0,30}stream|stream.{0,30}tool|streaming.{0,30}(?:unsupported|not supported)|invalid.{0,30}(?:stream|tool))/i.test(message);
-          if (!incompatibleStreamingTools) throw error;
-          console.warn("Streaming tool calls are unavailable for this model; using a synchronous compatibility response.", {
-            model: modelId,
-            message,
-          });
-          modelResult = await ai.run(modelId, { ...unifiedInput, stream: false });
-        }
+        const toolCalls = await tracing.enterSpan("chat", async (chatSpan) => {
+          setAgentIdentity(chatSpan, "chat", conversationId);
+          chatSpan.setAttribute("gen_ai.request.model", modelId);
+          try {
+            let modelResult: unknown;
+            try {
+              modelResult = await ai.run(modelId, unifiedInput);
+            } catch (error) {
+              const message = error instanceof Error ? error.message : "";
+              const incompatibleStreamingTools = /(?:tool.{0,30}stream|stream.{0,30}tool|streaming.{0,30}(?:unsupported|not supported)|invalid.{0,30}(?:stream|tool))/i.test(message);
+              if (!incompatibleStreamingTools) throw error;
+              chatSpan.setAttribute("neurondeck.streaming_tool_fallback", true);
+              console.warn("Streaming tool calls are unavailable for this model; using a synchronous compatibility response.", {
+                model: modelId,
+                message,
+              });
+              modelResult = await ai.run(modelId, { ...unifiedInput, stream: false });
+            }
 
-        let toolCalls: NormalizedToolCall[];
-        if (modelResult instanceof ReadableStream) {
-          const streamed = await consumeToolAwareModelStream(modelResult, (event) => {
-            if (event.error) throw new Error(event.error);
-            if (event.reasoning) send({ reasoning: event.reasoning });
-            if (event.content) send({ response: event.content });
-            if (event.usage) send({ usage: event.usage });
-          }, () => cancelled);
-          toolCalls = streamed.toolCalls;
-          if (!cancelled && !streamed.complete) {
-            throw new Error("The model stream ended before its completion marker.");
+            if (modelResult instanceof ReadableStream) {
+              const streamed = await consumeToolAwareModelStream(modelResult, (event) => {
+                if (event.error) throw new Error(event.error);
+                if (event.reasoning) send({ reasoning: event.reasoning });
+                if (event.content) send({ response: event.content });
+                if (event.usage) {
+                  setTokenUsage(chatSpan, event.usage);
+                  send({ usage: event.usage });
+                }
+              }, () => cancelled);
+              if (!cancelled && !streamed.complete) {
+                throw new Error("The model stream ended before its completion marker.");
+              }
+              setSpanOutcome(chatSpan, cancelled ? "cancelled" : "complete");
+              return streamed.toolCalls;
+            }
+
+            const synchronousToolCalls = extractToolCalls(modelResult);
+            const completion = extractCompletion(modelResult);
+            if (completion.reasoning) send({ reasoning: completion.reasoning });
+            if (completion.content) send({ response: completion.content });
+            if (completion.usage) {
+              setTokenUsage(chatSpan, completion.usage);
+              send({ usage: completion.usage });
+            }
+            setSpanOutcome(chatSpan, "complete");
+            return synchronousToolCalls;
+          } catch (error) {
+            setSpanOutcome(chatSpan, "error", error);
+            throw error;
           }
-        } else {
-          toolCalls = extractToolCalls(modelResult);
-          const completion = extractCompletion(modelResult);
-          if (completion.reasoning) send({ reasoning: completion.reasoning });
-          if (completion.content) send({ response: completion.content });
-          if (completion.usage) send({ usage: completion.usage });
-        }
+        });
 
-        if (cancelled) return;
+        if (cancelled) {
+          setSpanOutcome(invokeSpan, "cancelled");
+          return;
+        }
         const imageCall = toolCalls.find((call) => call.name === "generate_image");
         if (!imageCall) {
           if (toolCalls.length) throw new Error(`The model requested an unsupported tool: ${toolCalls[0].name}`);
+          setSpanOutcome(invokeSpan, "complete");
           send({ done: true });
           controller.close();
           return;
         }
 
-        await executeImageTool(imageCall.arguments);
+        await tracing.enterSpan("execute_tool", async (toolSpan) => {
+          toolSpan.setAttributes({
+            "gen_ai.operation.name": "execute_tool",
+            "gen_ai.tool.name": "generate_image",
+            "gen_ai.request.model": imageModel.id,
+            "neurondeck.payload_recording": false,
+          });
+          try {
+            await executeImageTool(imageCall.arguments);
+            setSpanOutcome(toolSpan, imageInvocationSucceeded ? "complete" : "error");
+          } catch (error) {
+            setSpanOutcome(toolSpan, "error", error);
+            throw error;
+          }
+        });
 
         if (imageInvocationFailed && !imageInvocationSucceeded) {
           const message = prefersChinese
@@ -1426,13 +1555,16 @@ const handleToolChat = (
             : "The image was not generated. Try again or choose a different image model.";
           send({ response: message });
           send({ done: true });
+          setSpanOutcome(invokeSpan, "error");
           if (!cancelled) controller.close();
           return;
         }
 
         send({ done: true });
+        setSpanOutcome(invokeSpan, "complete");
         controller.close();
       } catch (error) {
+        setSpanOutcome(invokeSpan, cancelled ? "cancelled" : "error", error);
         console.error("Workers AI function calling failed", {
           model: modelId,
           message: error instanceof Error ? error.message : "Unknown function calling error",
@@ -1442,6 +1574,7 @@ const handleToolChat = (
           controller.close();
         }
       }
+      });
     },
     cancel() {
       cancelled = true;
@@ -1571,6 +1704,9 @@ const handleChat = async (request: Request, env: Env): Promise<Response> => {
       ? Math.min(2, Math.max(0, body.temperature))
       : 0.6;
   const maxTokens = clampOutputTokens(body.maxTokens, getOutputTokenPolicyForModel(body.model));
+  const conversationId = typeof body.conversationId === "string" && conversationIdPattern.test(body.conversationId)
+    ? body.conversationId
+    : crypto.randomUUID();
   const resolvedAi = await resolveAiForRequest(request, env);
   if (!resolvedAi.ok) return resolvedAi.response;
 
@@ -1587,29 +1723,87 @@ const handleChat = async (request: Request, env: Env): Promise<Response> => {
       temperature,
       maxTokens,
       imageModelId as string,
+      conversationId,
     );
   }
 
+  let invokeSpan: Span | undefined;
+  let chatSpan: Span | undefined;
+  let traceEnded = false;
+  const finishTrace = (
+    outcome: "complete" | "cancelled" | "error",
+    error?: unknown,
+  ) => {
+    if (traceEnded) return;
+    traceEnded = true;
+    setSpanOutcome(chatSpan, outcome, error);
+    setSpanOutcome(invokeSpan, outcome, error);
+    chatSpan?.end();
+    invokeSpan?.end();
+  };
+
   try {
-    const result = await resolvedAi.ai.run(body.model, {
-      ...modelInput,
-      temperature,
-      max_tokens: maxTokens,
-      stream: true,
+    const result = await tracing.startActiveSpan("invoke_agent", (span) => {
+      invokeSpan = span;
+      setAgentIdentity(span, "invoke_agent", conversationId);
+      span.setAttribute("gen_ai.request.model", body.model as string);
+      return tracing.startActiveSpan("chat", (modelSpan) => {
+        chatSpan = modelSpan;
+        setAgentIdentity(modelSpan, "chat", conversationId);
+        modelSpan.setAttribute("gen_ai.request.model", body.model as string);
+        return resolvedAi.ai.run(body.model as string, {
+          ...modelInput,
+          temperature,
+          max_tokens: maxTokens,
+          stream: true,
+        });
+      });
     });
 
     const headers = sseHeaders();
 
     if (result instanceof ReadableStream) {
-      return new Response(result, { headers });
+      const reader = result.getReader();
+      const usageObserver = chatSpan ? createTokenUsageObserver(chatSpan) : undefined;
+      const tracedStream = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          try {
+            const { value, done } = await reader.read();
+            if (done) {
+              usageObserver?.finish();
+              finishTrace("complete");
+              controller.close();
+              return;
+            }
+            const chunk = value as Uint8Array;
+            usageObserver?.push(chunk);
+            controller.enqueue(chunk);
+          } catch (error) {
+            finishTrace("error", error);
+            controller.error(error);
+          }
+        },
+        async cancel(reason) {
+          try {
+            await reader.cancel(reason);
+          } finally {
+            finishTrace("cancelled");
+          }
+        },
+      });
+      return new Response(tracedStream, { headers });
     }
 
     const payload =
       result && typeof result === "object" && "response" in result
         ? result
         : { response: typeof result === "string" ? result : JSON.stringify(result) };
+    const completion = extractCompletion(result);
+    if (completion.usage && chatSpan) setTokenUsage(chatSpan, completion.usage);
+    finishTrace("complete");
     return new Response(`data: ${JSON.stringify(payload)}\n\ndata: [DONE]\n\n`, { headers });
   } catch (error) {
+    finishTrace("error", error);
     const message = error instanceof Error ? error.message : "Workers AI inference failed.";
     console.error("Workers AI inference failed", {
       model: body.model,

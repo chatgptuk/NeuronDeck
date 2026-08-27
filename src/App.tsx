@@ -619,6 +619,7 @@ function App() {
         }),
       ];
       const requestBody = JSON.stringify({
+        conversationId: conversation.id,
         model: conversation.modelId,
         messages: apiMessages,
         temperature: conversation.temperature,

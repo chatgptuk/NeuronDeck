@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { resetTestTraceSpans, testTraceSpans } from "../src/test/cloudflare-workers";
 import worker from "./index";
 
 const pixel = "data:image/png;base64,iVBORw0KGgo=";
@@ -11,6 +12,7 @@ const publicPoolAccounts = [
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  resetTestTraceSpans();
 });
 
 const createEnv = () => {
@@ -416,6 +418,62 @@ describe("speech synthesis API", () => {
   });
 });
 
+describe("agent tracing", () => {
+  it("keeps non-tool model output genuinely streamed until the upstream response ends", async () => {
+    let finishStream: (() => void) | undefined;
+    const model = "@cf/google/gemma-2b-it-lora";
+    const run = vi.fn(async () => new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('data: {"response":"first"}\n\n'));
+        finishStream = () => {
+          controller.enqueue(new TextEncoder().encode(
+            'data: {"response":"second"}\n\ndata: {"usage":{"prompt_tokens":3,"completion_tokens":5}}\n\ndata: [DONE]\n\n',
+          ));
+          controller.close();
+        };
+      },
+    }));
+    const response = await worker.fetch(new Request("https://ai.chatgpt.org.uk/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-neurondeck-client": "test-client-1234",
+      },
+      body: JSON.stringify({
+        conversationId: "22222222-2222-4222-8222-222222222222",
+        model,
+        messages: [{ role: "user", content: "Stream this response" }],
+      }),
+    }), {
+      AI: { run, toMarkdown: vi.fn() },
+      ASSETS: { fetch: vi.fn() },
+      CHAT_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+    } as never);
+    const reader = response.body!.getReader();
+    const first = await reader.read();
+
+    expect(new TextDecoder().decode(first.value)).toContain('"first"');
+    expect(first.done).toBe(false);
+    expect(testTraceSpans.map((span) => span.name)).toEqual(["invoke_agent", "chat"]);
+    expect(testTraceSpans.every((span) => !span.ended)).toBe(true);
+
+    finishStream?.();
+    while (!(await reader.read()).done) {
+      // Drain the real upstream stream so the manual spans cover its full lifetime.
+    }
+    expect(testTraceSpans.every((span) => span.ended)).toBe(true);
+    expect(testTraceSpans[0].attributes).toMatchObject({
+      "gen_ai.operation.name": "invoke_agent",
+      "gen_ai.conversation.id": "22222222-2222-4222-8222-222222222222",
+      "neurondeck.outcome": "complete",
+    });
+    expect(testTraceSpans[1].attributes).toMatchObject({
+      "gen_ai.usage.input_tokens": 3,
+      "gen_ai.usage.output_tokens": 5,
+    });
+  });
+});
+
 describe("image generation function calling", () => {
   it("streams an ordinary tool-model reply from the first and only inference", async () => {
     let finishStream: (() => void) | undefined;
@@ -492,6 +550,7 @@ describe("image generation function calling", () => {
         "x-neurondeck-client": "test-client-1234",
       },
       body: JSON.stringify({
+        conversationId: "11111111-1111-4111-8111-111111111111",
         model: chatModel,
         imageModel,
         messages: [{ role: "user", content: "给我设计一张安静的温室插画" }],
@@ -515,6 +574,37 @@ describe("image generation function calling", () => {
     expect(body).toMatch(/"elapsedMs":\d+/);
     expect(body).toContain('"done":true');
     expect(body).not.toContain("tool_calls");
+    expect(testTraceSpans.map((span) => span.name)).toEqual(["invoke_agent", "chat", "execute_tool"]);
+    const invokeSpan = testTraceSpans[0];
+    const chatSpan = testTraceSpans[1];
+    const toolSpan = testTraceSpans[2];
+    expect(invokeSpan.attributes).toMatchObject({
+      "gen_ai.operation.name": "invoke_agent",
+      "gen_ai.agent.name": "neurondeck-chat",
+      "gen_ai.agent.id": "neurondeck-production",
+      "gen_ai.conversation.id": "11111111-1111-4111-8111-111111111111",
+      "neurondeck.payload_recording": false,
+    });
+    expect(chatSpan.attributes).toMatchObject({
+      "gen_ai.operation.name": "chat",
+      "gen_ai.request.model": chatModel,
+      "neurondeck.outcome": "complete",
+    });
+    expect(toolSpan.attributes).toMatchObject({
+      "gen_ai.operation.name": "execute_tool",
+      "gen_ai.tool.name": "generate_image",
+      "gen_ai.request.model": imageModel,
+      "neurondeck.outcome": "complete",
+    });
+    expect(testTraceSpans.every((span) => span.ended)).toBe(true);
+    expect(Object.keys({ ...invokeSpan.attributes, ...chatSpan.attributes, ...toolSpan.attributes }))
+      .not.toEqual(expect.arrayContaining([
+        "gen_ai.input.messages",
+        "gen_ai.output.messages",
+        "gen_ai.system_instructions",
+        "gen_ai.tool.call.arguments",
+        "gen_ai.tool.call.result",
+      ]));
   });
 
   it("runs FLUX.2 Dev as a durable workflow and returns the stored result URL", async () => {

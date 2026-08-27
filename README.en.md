@@ -175,6 +175,14 @@ wrangler deploy
 
 To use a custom domain, copy [`wrangler.production.example.jsonc`](./wrangler.production.example.jsonc), fill in your own domain and resource identifiers, and save the real configuration as `.wrangler.production.jsonc`, which Git ignores. Confirm that the domain and resources belong to the active Cloudflare account before deploying.
 
+## Agent tracing
+
+Cloudflare Agent Tracing is enabled and the custom chat harness emits `invoke_agent`, `chat`, and `execute_tool` spans. After deployment, open **Workers & Pages → Observability → Agents** in the Cloudflare Dashboard to inspect model latency, tool latency, status, and token usage reported by the model for each turn.
+
+Tracing records metadata only: a random conversation ID, model ID, operation type, duration, status, and token counts. It does not record user messages, system prompts, reasoning, attachments, image prompts, tool arguments, tool results, OAuth data, or API credentials. The public configuration currently samples 100% of requests; high-traffic deployments can lower `observability.traces.head_sampling_rate`, for example to `0.05` for 5% sampling.
+
+Cloudflare documentation: [Agent tracing](https://developers.cloudflare.com/agents/runtime/operations/observability/tracing/) · [Workers custom spans](https://developers.cloudflare.com/workers/observability/traces/custom-spans/)
+
 ## Refresh the model catalog
 
 The committed catalog is a deployment snapshot, so the application never needs to expose a Cloudflare API token at runtime. Refresh it before a release with:
