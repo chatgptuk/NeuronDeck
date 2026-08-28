@@ -173,7 +173,7 @@ npm run check
 wrangler deploy
 ```
 
-如需自定义域名，请复制 [`wrangler.production.example.jsonc`](./wrangler.production.example.jsonc)，填写你自己的域名与资源标识，并将真实配置保存为已被 Git 忽略的 `.wrangler.production.jsonc`。部署前请确认域名和资源都属于当前 Cloudflare 账户。
+如需自定义域名，请复制 [`wrangler.production.example.jsonc`](./wrangler.production.example.jsonc)，填写你自己的域名与资源标识，并将真实配置保存为已被 Git 忽略的 `.wrangler.production.jsonc`。生产示例默认同时保留 `workers.dev` 地址；如果只希望使用自定义域名，可将 `workers_dev` 改为 `false`。部署前请确认域名和资源都属于当前 Cloudflare 账户。
 
 ## 更新模型目录
 

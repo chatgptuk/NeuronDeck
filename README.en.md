@@ -173,7 +173,7 @@ npm run check
 wrangler deploy
 ```
 
-To use a custom domain, copy [`wrangler.production.example.jsonc`](./wrangler.production.example.jsonc), fill in your own domain and resource identifiers, and save the real configuration as `.wrangler.production.jsonc`, which Git ignores. Confirm that the domain and resources belong to the active Cloudflare account before deploying.
+To use a custom domain, copy [`wrangler.production.example.jsonc`](./wrangler.production.example.jsonc), fill in your own domain and resource identifiers, and save the real configuration as `.wrangler.production.jsonc`, which Git ignores. The production example keeps the `workers.dev` address enabled alongside the custom domain; set `workers_dev` to `false` if you only want the custom domain. Confirm that the domain and resources belong to the active Cloudflare account before deploying.
 
 ## Refresh the model catalog
 
