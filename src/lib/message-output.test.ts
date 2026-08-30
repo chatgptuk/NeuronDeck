@@ -25,5 +25,18 @@ describe("message output visibility", () => {
       generatedImages: [],
       webSources: [{ title: "Docs", url: "https://example.com/", domain: "example.com" }],
     })).toBe(true);
+    expect(hasRenderableMessageOutput({
+      content: "",
+      browserScreenshots: [{
+        id: "shot-1",
+        dataUrl: "data:image/png;base64,abc",
+        url: "https://example.com/",
+        title: "example.com",
+        width: 1280,
+        height: 800,
+        fullPage: false,
+        viewport: "desktop",
+      }],
+    })).toBe(true);
   });
 });

@@ -4,11 +4,13 @@ import {
 } from "./public-ai-pool";
 
 export const BROWSER_RUN_MODEL_ID = "browser-run/markdown";
+export const BROWSER_SCREENSHOT_MODEL_ID = "browser-run/screenshot";
 export const MAX_WEB_CONTENT_CHARACTERS = 16_000;
 
 const BROWSER_REQUEST_TIMEOUT_MS = 45_000;
 const QUICK_ACTION_TIMEOUT_MS = 25_000;
 const MAX_SEARCH_RESULTS = 5;
+const MAX_SCREENSHOT_BYTES = 4 * 1024 * 1024;
 const ALLOWED_PORTS = new Set(["", "80", "443"]);
 
 export interface WebSource {
@@ -29,6 +31,21 @@ export interface WebSearchResult {
   results: WebSource[];
   elapsedMs: number;
   browserMs: number;
+}
+
+export interface BrowserScreenshotResult {
+  bytes: Uint8Array;
+  mimeType: "image/png" | "image/jpeg" | "image/webp";
+  width: number;
+  height: number;
+  elapsedMs: number;
+  browserMs: number;
+  accountId: string;
+}
+
+export interface BrowserScreenshotOptions {
+  fullPage: boolean;
+  viewport: "desktop" | "mobile";
 }
 
 export class BrowserRunError extends Error {
@@ -140,6 +157,128 @@ const extractMarkdown = (value: unknown): string => {
   if (typeof record.markdown === "string") return record.markdown;
   if (typeof record.content === "string") return record.content;
   return "";
+};
+
+const base64ToBytes = (value: string): Uint8Array => {
+  const binary = atob(value.replace(/\s+/g, ""));
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+};
+
+const screenshotBytesFromPayload = (value: unknown): { bytes: Uint8Array; mimeType: BrowserScreenshotResult["mimeType"] } => {
+  const screenshot = typeof value === "string"
+    ? value
+    : value && typeof value === "object" && typeof (value as { screenshot?: unknown }).screenshot === "string"
+      ? (value as { screenshot: string }).screenshot
+      : "";
+  const dataUrl = /^data:(image\/(?:png|jpeg|webp));base64,(.+)$/s.exec(screenshot);
+  const bytes = base64ToBytes(dataUrl?.[2] ?? screenshot);
+  return {
+    bytes,
+    mimeType: (dataUrl?.[1] as BrowserScreenshotResult["mimeType"] | undefined) ?? "image/png",
+  };
+};
+
+const pngDimensions = (bytes: Uint8Array): { width: number; height: number } | undefined => {
+  if (bytes.length < 24 || bytes[0] !== 0x89 || bytes[1] !== 0x50 || bytes[2] !== 0x4e || bytes[3] !== 0x47) return undefined;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return { width: view.getUint32(16), height: view.getUint32(20) };
+};
+
+export const runBrowserScreenshot = async (
+  credential: PublicAiAccountCredential,
+  inputUrl: string,
+  options: BrowserScreenshotOptions,
+  externalSignal?: AbortSignal,
+): Promise<BrowserScreenshotResult> => {
+  const url = validatePublicWebUrl(inputUrl);
+  const requestedViewport = options.viewport === "mobile"
+    ? { width: 390, height: 844, deviceScaleFactor: 1, isMobile: true }
+    : { width: 1280, height: 800, deviceScaleFactor: 1 };
+  const startedAt = Date.now();
+  const abortController = new AbortController();
+  const abortFromCaller = () => abortController.abort();
+  if (externalSignal?.aborted) abortController.abort();
+  else externalSignal?.addEventListener("abort", abortFromCaller, { once: true });
+  const timeout = setTimeout(() => abortController.abort(), BROWSER_REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${credential.accountId}/browser-rendering/screenshot`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${credential.apiToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          url: url.href,
+          screenshotOptions: { fullPage: options.fullPage, type: "png" },
+          viewport: requestedViewport,
+          gotoOptions: { waitUntil: "networkidle2", timeout: QUICK_ACTION_TIMEOUT_MS },
+          actionTimeout: QUICK_ACTION_TIMEOUT_MS,
+          bestAttempt: true,
+          allowRequestPattern: [allowedTargetPattern(url)],
+        }),
+        signal: abortController.signal,
+      },
+    );
+    if (!response.ok) throw await browserErrorForResponse(response);
+    const contentType = response.headers.get("content-type")?.split(";")[0].toLowerCase() ?? "";
+    let normalized: { bytes: Uint8Array; mimeType: BrowserScreenshotResult["mimeType"] };
+    if (contentType.startsWith("image/")) {
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      normalized = {
+        bytes,
+        mimeType: contentType === "image/jpeg" || contentType === "image/webp" ? contentType : "image/png",
+      };
+    } else {
+      const envelope = await response.json() as { success?: unknown; result?: unknown };
+      if (envelope.success === false) throw new BrowserRunError("Browser Run could not capture the webpage.", "unavailable", true);
+      normalized = screenshotBytesFromPayload(envelope.result);
+    }
+    if (!normalized.bytes.length || normalized.bytes.length > MAX_SCREENSHOT_BYTES) {
+      throw new BrowserRunError("The webpage screenshot was empty or too large.", "unavailable");
+    }
+    const dimensions = pngDimensions(normalized.bytes) ?? requestedViewport;
+    return {
+      ...normalized,
+      width: dimensions.width,
+      height: dimensions.height,
+      elapsedMs: Math.max(1, Date.now() - startedAt),
+      browserMs: Math.max(0, Number(response.headers.get("x-browser-ms-used")) || 0),
+      accountId: credential.accountId,
+    };
+  } catch (error) {
+    if (error instanceof BrowserRunError) throw error;
+    if (abortController.signal.aborted) {
+      throw new BrowserRunError("Browser Run timed out and the screenshot request was released.", "timeout", true);
+    }
+    throw new BrowserRunError("Browser Run could not capture the webpage.", "unavailable", true);
+  } finally {
+    clearTimeout(timeout);
+    externalSignal?.removeEventListener("abort", abortFromCaller);
+  }
+};
+
+export const runBrowserScreenshotWithPool = async (
+  accounts: readonly PublicAiAccountCredential[],
+  seed: string,
+  url: string,
+  options: BrowserScreenshotOptions,
+  signal?: AbortSignal,
+): Promise<BrowserScreenshotResult> => {
+  const ordered = orderPublicAiAccounts(accounts, seed);
+  let lastError: BrowserRunError | undefined;
+  for (const account of ordered) {
+    try {
+      return await runBrowserScreenshot(account, url, options, signal);
+    } catch (error) {
+      lastError = error instanceof BrowserRunError
+        ? error
+        : new BrowserRunError("Browser Run could not capture the webpage.", "unavailable", true);
+      if (!lastError.retryable && lastError.code !== "permission") throw lastError;
+    }
+  }
+  throw lastError ?? new BrowserRunError("No public Browser Run account is configured.", "unavailable");
 };
 
 export const runBrowserMarkdown = async (

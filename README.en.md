@@ -24,7 +24,7 @@ NeuronDeck brings Cloudflare-hosted chat models, multimodal input, image generat
 
 ## Highlights
 
-- 29 Cloudflare-hosted chat models with search, capability filters, favorites, context sizes, and price ordering
+- 29 Cloudflare-hosted chat models with GLM 5.3 Flash pinned first and selected by default, plus search, capability filters, favorites, context sizes, and price ordering
 - Chinese and English interface, light appearance by default, and a persistent theme switch
 - Genuine SSE streaming with temporary Durable Object event persistence and cursor-based resume after refresh, backgrounding, or a dropped connection
 - Image input for vision models, plus PDF, Word, spreadsheet, HTML, XML, OpenDocument, and Numbers attachments
@@ -37,7 +37,8 @@ NeuronDeck brings Cloudflare-hosted chat models, multimodal input, image generat
 - Browser-local IndexedDB history, mobile refinements, message timestamps, and generation duration
 - Optional public quota pool with stable distribution and automatic failover across administrator-provided Cloudflare accounts
 - Optional Cloudflare OAuth so users can authorize their own accounts and use their own Workers AI quota
-- Multi-round Function Calling: one response can invoke several tools, create up to four images, and use Browser Run to search and read public webpages
+- Multi-round Function Calling: one response can invoke several tools, create up to four images, and use Browser Run to search, read, and capture public webpages
+- A trusted server-side current time and browser time zone are added to each request, so past and future dates can be judged without web access
 - Optional model health and cost center with per-model success rate, first-token latency, total duration, tokens, tool calls, estimated chat cost, and anonymous traffic trends
 - Installable PWA with Service Worker completion alerts for chat and image generations that finish while the page is in the background
 - Same-origin API checks, request validation, encrypted OAuth sessions, and per-minute rate limiting
@@ -78,9 +79,9 @@ Cloudflare documentation: [Enable R2](https://developers.cloudflare.com/r2/get-s
 
 ### Optional: configure a public site quota pool
 
-An administrator can provide up to 16 Cloudflare accounts for anonymous visitors. Chat, file conversion, Function Calling, speech synthesis, and background image jobs all use the same pool. A browser is assigned a stable starting entry, and the Worker automatically fails over when an account returns an authorization, quota, capacity, or server error. Connected users use their own quota for Workers AI requests; Browser Run search and webpage reading always use this site pool instead of the Worker's deployment account.
+An administrator can provide up to 16 Cloudflare accounts for anonymous visitors. Chat, file conversion, Function Calling, speech synthesis, and background image jobs all use the same pool. A browser is assigned a stable starting entry, and the Worker automatically fails over when an account returns an authorization, quota, capacity, or server error. Connected users use their own quota for Workers AI requests; Browser Run search, webpage reading, and screenshots always use this site pool instead of the Worker's deployment account.
 
-1. In each Cloudflare account, open Workers AI and select **Use REST API → Create a Workers AI API Token**. For a custom token, grant `Workers AI Read`, `Workers AI Edit`, and the account-level `Browser Rendering Edit` permission for search and webpage reading. Never use a Global API Key. Without the Browser permission, chat and image generation continue to work, but web tools return a permission notice.
+1. In each Cloudflare account, open Workers AI and select **Use REST API → Create a Workers AI API Token**. For a custom token, grant `Workers AI Read`, `Workers AI Edit`, and the account-level `Browser Rendering Edit` permission for search, webpage reading, and screenshots. Never use a Global API Key. Without the Browser permission, chat and image generation continue to work, but web tools return a permission notice.
 
 2. Store the following JSON as a Worker Secret named `PUBLIC_AI_ACCOUNTS`. Never put real tokens in Wrangler configuration, `.env`, README, or Git:
 
@@ -109,7 +110,7 @@ An administrator can provide up to 16 Cloudflare accounts for anonymous visitors
 
 The pool has an additional limit of 60 requests per minute in each Cloudflare location. Each visitor is limited to 10 chat requests and 6 speech-synthesis requests per minute. An invalid Secret fails closed instead of silently charging the Worker owner's account. Cloudflare limits an individual Secret/environment variable to 5 KB.
 
-Browser Run uses stateless Quick Actions. Each page read has a hard 45-second timeout, and completed or aborted calls leave no browser session, cookies, or background tabs behind. A chat turn is limited to four Browser Run actions to prevent accidental quota use.
+Browser Run uses stateless Quick Actions. Page reads and screenshots have a hard 45-second timeout, and completed or aborted calls leave no browser session, cookies, or background tabs behind. Screenshots appear as real downloadable images but do not inherit the user's local signed-in browser state. A chat turn is limited to four Browser Run actions to prevent accidental quota use.
 
 Cloudflare documentation: [Workers AI REST API](https://developers.cloudflare.com/workers-ai/get-started/rest-api/) · [Browser Run Quick Actions](https://developers.cloudflare.com/browser-run/quick-actions/) · [Worker Secrets](https://developers.cloudflare.com/workers/configuration/secrets/) · [Worker environment variable limits](https://developers.cloudflare.com/workers/platform/limits/#environment-variables)
 

@@ -203,6 +203,7 @@ const modelNames = new Map<string, string>([
   [TTS_MODEL_IDS.auraEnglish, "Aura-2 English"],
   [TTS_MODEL_IDS.auraSpanish, "Aura-2 Spanish"],
   ["browser-run/markdown", "Cloudflare Browser Run"],
+  ["browser-run/screenshot", "Browser Run Screenshot"],
 ]);
 
 const formatNumber = (value: number, language: Language): string =>

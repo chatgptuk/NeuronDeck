@@ -1759,6 +1759,87 @@ describe("Browser Run function calling", () => {
     expect(body).toContain("无状态 Quick Actions");
     expect(body).not.toContain(publicAccount.apiToken);
   });
+
+  it("captures a webpage screenshot, streams the real image, and supplies a trusted runtime clock", async () => {
+    const publicAccount = publicPoolAccounts[0];
+    const modelRequests: Array<Record<string, unknown>> = [];
+    const screenshotRequests: Array<Record<string, unknown>> = [];
+    const png = new Uint8Array(24);
+    png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const pngView = new DataView(png.buffer);
+    pngView.setUint32(16, 390);
+    pngView.setUint32(20, 844);
+    let modelRound = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/browser-rendering/screenshot")) {
+        screenshotRequests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return new Response(png, {
+          headers: { "content-type": "image/png", "x-browser-ms-used": "88" },
+        });
+      }
+
+      modelRequests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      modelRound += 1;
+      if (modelRound === 1) {
+        return Response.json({ success: true, result: { choices: [{ message: { tool_calls: [{
+          id: "screenshot-call",
+          type: "function",
+          function: {
+            name: "capture_screenshot",
+            arguments: JSON.stringify({
+              url: "https://example.com/",
+              full_page: false,
+              viewport: "mobile",
+            }),
+          },
+        }] } }] } });
+      }
+      return new Response(
+        'data: {"response":"网页截图已经显示在消息中。"}\n\ndata: [DONE]\n\n',
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const ownerRun = vi.fn();
+    const response = await worker.fetch(new Request("https://ai.chatgpt.org.uk/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "accept-language": "zh-CN",
+        "x-neurondeck-client": "browser-screenshot-client",
+      },
+      body: JSON.stringify({
+        model: chatModel,
+        timeZone: "Asia/Shanghai",
+        messages: [{ role: "user", content: "打开 https://example.com 并给我一张移动端截图" }],
+      }),
+    }), {
+      AI: { run: ownerRun, toMarkdown: vi.fn() },
+      ASSETS: { fetch: vi.fn() },
+      CHAT_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+      PUBLIC_AI_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+      PUBLIC_AI_ACCOUNTS: JSON.stringify({ accounts: [publicAccount] }),
+    } as never);
+    const body = await response.text();
+
+    expect(ownerRun).not.toHaveBeenCalled();
+    expect(modelRound).toBe(2);
+    expect(screenshotRequests).toHaveLength(1);
+    expect(screenshotRequests[0]).toMatchObject({
+      url: "https://example.com/",
+      screenshotOptions: { fullPage: false, type: "png" },
+      viewport: { width: 390, height: 844, isMobile: true },
+    });
+    expect(JSON.stringify(modelRequests[0])).toContain("Trusted runtime clock");
+    expect(JSON.stringify(modelRequests[0])).toContain("Asia/Shanghai");
+    expect(JSON.stringify(modelRequests[1])).toContain("screenshot is already visible");
+    expect(body).toContain('"status":"capturing"');
+    expect(body).toContain('"browser_screenshot"');
+    expect(body).toContain("data:image/png;base64,");
+    expect(body).toContain("网页截图已经显示在消息中");
+    expect(body).not.toContain(publicAccount.apiToken);
+  });
 });
 
 describe("durable image job API", () => {

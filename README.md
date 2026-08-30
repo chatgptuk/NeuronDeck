@@ -24,7 +24,7 @@ NeuronDeck 把 Cloudflare 托管的对话模型、多模态输入、图片生成
 
 ## 主要功能
 
-- 29 个 Cloudflare 托管的对话模型，支持搜索、能力筛选、收藏、上下文大小与价格排序
+- 29 个 Cloudflare 托管的对话模型，默认并置顶 GLM 5.3 Flash，支持搜索、能力筛选、收藏、上下文大小与价格排序
 - 中文与英文界面，默认浅色外观，并可持久化切换主题
 - 真正的 SSE 流式生成；生成事件由 Durable Object 临时保存，刷新、切后台或短暂断网后可从游标续传
 - 视觉模型支持图片输入；支持 PDF、Word、表格、HTML、XML、OpenDocument 与 Numbers 等附件
@@ -37,7 +37,8 @@ NeuronDeck 把 Cloudflare 托管的对话模型、多模态输入、图片生成
 - IndexedDB 本地对话历史、移动端优化、消息时间与生成耗时
 - 可选站点公共额度池：管理员可安全接入多个 Cloudflare 账户，自动分流并在额度故障时切换
 - 可选 Cloudflare OAuth：用户可授权自己的账户并使用自己的 Workers AI 额度
-- 多轮 Function Calling：单次回复可连续调用多个工具、生成最多 4 张图片，并通过 Browser Run 搜索和读取公开网页
+- 多轮 Function Calling：单次回复可连续调用多个工具、生成最多 4 张图片，并通过 Browser Run 搜索、读取和截取公开网页
+- 服务端为每次请求注入可信当前时间与浏览器时区；无需联网即可正确判断今天、过去与未来日期
 - 可选“模型健康与成本中心”：按模型统计成功率、首字耗时、总耗时、Token、工具调用和估算聊天成本，并保留匿名访问趋势
 - PWA 安装与生成完成提醒：可添加到主屏幕/作为独立应用运行，页面在后台时由 Service Worker 提醒聊天或生图已经完成
 - 同源 API 校验、请求验证、加密 OAuth 会话与每分钟请求限制
@@ -78,9 +79,9 @@ Cloudflare 文档：[启用 R2](https://developers.cloudflare.com/r2/get-started
 
 ### 可选：配置站点公共额度池
 
-管理员可以提供最多 16 个 Cloudflare 账户供匿名访客公开使用。聊天、文件转换、Function Calling、语音合成与后台生图都会使用同一额度池；相同浏览器会稳定分配到同一入口，遇到鉴权、额度、容量或服务端错误时自动切换到下一账户。用户连接自己的 Cloudflare 账户后，Workers AI 请求优先使用用户自己的额度；Browser Run 搜索和网页读取始终使用这个站点公共池，不会消耗 Worker 部署账户的 Browser Run 额度。
+管理员可以提供最多 16 个 Cloudflare 账户供匿名访客公开使用。聊天、文件转换、Function Calling、语音合成与后台生图都会使用同一额度池；相同浏览器会稳定分配到同一入口，遇到鉴权、额度、容量或服务端错误时自动切换到下一账户。用户连接自己的 Cloudflare 账户后，Workers AI 请求优先使用用户自己的额度；Browser Run 搜索、网页读取与截图始终使用这个站点公共池，不会消耗 Worker 部署账户的 Browser Run 额度。
 
-1. 在每个 Cloudflare 账户的 Workers AI 页面选择 **Use REST API → Create a Workers AI API Token**。如需自定义 Token，请授予该账户的 `Workers AI Read`、`Workers AI Edit`，并为搜索和网页读取增加账户级 `Browser Rendering Edit` 权限；不要使用 Global API Key。若不增加 Browser 权限，聊天和生图仍可使用，但联网工具会返回权限提示。
+1. 在每个 Cloudflare 账户的 Workers AI 页面选择 **Use REST API → Create a Workers AI API Token**。如需自定义 Token，请授予该账户的 `Workers AI Read`、`Workers AI Edit`，并为搜索、网页读取与截图增加账户级 `Browser Rendering Edit` 权限；不要使用 Global API Key。若不增加 Browser 权限，聊天和生图仍可使用，但联网工具会返回权限提示。
 
 2. 将以下 JSON 填入名为 `PUBLIC_AI_ACCOUNTS` 的 Worker Secret。真实 Token 不要写入 Wrangler 配置、`.env`、README 或 Git：
 
@@ -109,7 +110,7 @@ Cloudflare 文档：[启用 R2](https://developers.cloudflare.com/r2/get-started
 
 公共池在每个 Cloudflare 边缘位置额外受每分钟 60 次的池级限流保护；每位访客的聊天请求限制为每分钟 10 次，语音合成限制为每分钟 6 次。Secret 格式不合法时服务会拒绝匿名 AI 请求，不会静默消耗主站账户额度。Cloudflare 对单个 Secret/环境变量限制为 5 KB。
 
-Browser Run 使用无状态 Quick Actions：每个页面读取都有 45 秒硬超时，请求完成或中断后不保留浏览器会话、Cookie 或后台标签页。每轮对话最多执行 4 次 Browser Run 操作，避免意外消耗额度。
+Browser Run 使用无状态 Quick Actions：页面读取与截图都有 45 秒硬超时，请求完成或中断后不保留浏览器会话、Cookie 或后台标签页。截图会作为真实图片显示并可下载，但不会继承用户本地浏览器的登录状态。每轮对话最多执行 4 次 Browser Run 操作，避免意外消耗额度。
 
 Cloudflare 文档：[Workers AI REST API](https://developers.cloudflare.com/workers-ai/get-started/rest-api/) · [Browser Run Quick Actions](https://developers.cloudflare.com/browser-run/quick-actions/) · [Worker Secrets](https://developers.cloudflare.com/workers/configuration/secrets/) · [Worker 环境变量限制](https://developers.cloudflare.com/workers/platform/limits/#environment-variables)
 

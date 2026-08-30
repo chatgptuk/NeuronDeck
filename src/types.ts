@@ -64,8 +64,20 @@ export interface WebSource {
   domain: string;
 }
 
+export interface BrowserScreenshot {
+  id: string;
+  dataUrl: string;
+  url: string;
+  title: string;
+  width: number;
+  height: number;
+  fullPage: boolean;
+  viewport: "desktop" | "mobile";
+  elapsedMs?: number;
+}
+
 export interface WebResearchState {
-  status: "searching" | "reading" | "complete" | "error";
+  status: "searching" | "reading" | "capturing" | "complete" | "error";
   query?: string;
   url?: string;
   message?: string;
@@ -86,6 +98,7 @@ export interface ChatMessage {
   imageGeneration?: ImageGenerationState;
   webResearch?: WebResearchState;
   webSources?: WebSource[];
+  browserScreenshots?: BrowserScreenshot[];
   generationSessionId?: string;
   streamCursor?: number;
   recoveryState?: "connecting" | "recovering";
@@ -120,6 +133,7 @@ export interface StreamEvent {
   generatedImage?: GeneratedImage;
   imageGeneration?: ImageGenerationState;
   webResearch?: WebResearchState;
+  browserScreenshot?: BrowserScreenshot;
   cursor?: number;
   cancelled?: boolean;
 }

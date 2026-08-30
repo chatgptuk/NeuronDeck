@@ -106,9 +106,10 @@ import {
   selectCloudflareAccount,
   type CloudflareAuthStatus,
 } from "./lib/cloudflare-auth";
-import type { Attachment, ChatMessage, Conversation, GeneratedImage, ModelInfo, WebResearchState, WebSource, WorkspaceState } from "./types";
+import type { Attachment, BrowserScreenshot, ChatMessage, Conversation, GeneratedImage, ModelInfo, WebResearchState, WebSource, WorkspaceState } from "./types";
 import { AttachmentStrip } from "./components/AttachmentStrip";
 import { GeneratedImageGallery } from "./components/GeneratedImageGallery";
+import { BrowserScreenshotGallery } from "./components/BrowserScreenshotGallery";
 import { WebResearchPanel } from "./components/WebResearchPanel";
 import { ModelPicker } from "./components/ModelPicker";
 import {
@@ -635,6 +636,7 @@ function App() {
       let content = resumedMessage?.content ?? "";
       let reasoning = resumedMessage?.reasoning ?? "";
       let generatedImages: GeneratedImage[] = resumedMessage?.generatedImages ?? [];
+      let browserScreenshots: BrowserScreenshot[] = resumedMessage?.browserScreenshots ?? [];
       let webResearch: WebResearchState | undefined = resumedMessage?.webResearch;
       let webSources: WebSource[] = resumedMessage?.webSources ?? [];
       let pendingImageJobId = resumedMessage?.imageGeneration?.status === "generating"
@@ -691,6 +693,7 @@ function App() {
           maxTokens: conversation.maxTokens,
           imageModel: conversation.imageModelId,
           imageReferences: getImageReferencesForRequest(contextMessages),
+          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
         });
       })();
 
@@ -752,12 +755,16 @@ function App() {
                 const source = event.webResearch.source;
                 if (source && !webSources.some((item) => item.url === source.url)) webSources = [...webSources, source];
               }
-              if (event.content || event.reasoning || event.generatedImage || event.imageGeneration || event.webResearch || event.cursor != null) {
+              if (event.browserScreenshot && !browserScreenshots.some((item) => item.id === event.browserScreenshot!.id)) {
+                browserScreenshots = [...browserScreenshots, event.browserScreenshot];
+              }
+              if (event.content || event.reasoning || event.generatedImage || event.imageGeneration || event.webResearch || event.browserScreenshot || event.cursor != null) {
                 updateMessage(conversation.id, assistantId, (message) => ({
                   ...message,
                   content,
                   reasoning,
                   generatedImages,
+                  browserScreenshots,
                   webResearch,
                   webSources,
                   imageGeneration: event.imageGeneration ??
@@ -807,9 +814,14 @@ function App() {
           ...message,
           content: cancelledByServer
             ? content || t.generationStopped
-            : content || (generatedImages.length ? t.imageGeneratedFallback : t.emptyCompletion),
+            : content || (generatedImages.length
+              ? t.imageGeneratedFallback
+              : browserScreenshots.length
+                ? t.screenshotCapturedFallback
+                : t.emptyCompletion),
           reasoning,
           generatedImages,
+          browserScreenshots,
           webResearch,
           webSources,
           status: "complete",
@@ -840,6 +852,7 @@ function App() {
           content: message,
           reasoning,
           generatedImages,
+          browserScreenshots,
           webResearch,
           webSources,
           status: stopped ? "complete" : "error",
@@ -860,6 +873,7 @@ function App() {
       t.generationStopped,
       t.imageGeneratedFallback,
       t.requestFailed,
+      t.screenshotCapturedFallback,
       updateMessage,
     ],
   );
@@ -1323,6 +1337,13 @@ function App() {
               "",
             ])
           : []),
+        ...(message.browserScreenshots?.length
+          ? message.browserScreenshots.flatMap((screenshot) => [
+              `${t.browserScreenshot}: ${screenshot.url}`,
+              `${screenshot.width} × ${screenshot.height}`,
+              "",
+            ])
+          : []),
         message.content,
         "",
       ]),
@@ -1539,6 +1560,10 @@ function App() {
                           state={message.imageGeneration}
                           language={language}
                         />
+                        <BrowserScreenshotGallery
+                          screenshots={message.browserScreenshots}
+                          language={language}
+                        />
                         <WebResearchPanel
                           state={message.webResearch}
                           sources={message.webSources}
@@ -1558,7 +1583,7 @@ function App() {
                           <Suspense fallback={<p>{message.content}</p>}>
                             <MarkdownMessage content={message.content} language={language} />
                           </Suspense>
-                        ) : message.imageGeneration || message.generatedImages?.length || message.webResearch ? null : (
+                        ) : message.imageGeneration || message.generatedImages?.length || message.browserScreenshots?.length || message.webResearch ? null : (
                           <div className="typing"><span /><span /><span /></div>
                         )}
                       </div>

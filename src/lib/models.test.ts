@@ -9,8 +9,8 @@ import {
 } from "./models";
 
 describe("Cloudflare-hosted chat catalog", () => {
-  it("uses Kimi K2.7 Code as the default model", () => {
-    expect(DEFAULT_MODEL_ID).toBe("@cf/moonshotai/kimi-k2.7-code");
+  it("uses GLM 5.3 Flash as the default model", () => {
+    expect(DEFAULT_MODEL_ID).toBe("@cf/zai-org/glm-5.3-flash");
     expect(FALLBACK_MODELS.some((model) => model.id === DEFAULT_MODEL_ID)).toBe(true);
   });
 
@@ -59,8 +59,9 @@ describe("Cloudflare-hosted chat catalog", () => {
     ]);
   });
 
-  it("puts the two Kimi models first and keeps R1 Distill behind current DeepSeek models", () => {
-    expect(sortModelsByPrice(FALLBACK_MODELS).slice(0, 5).map((model) => model.id)).toEqual([
+  it("puts GLM 5.3 Flash first and keeps R1 Distill behind current DeepSeek models", () => {
+    expect(sortModelsByPrice(FALLBACK_MODELS).slice(0, 6).map((model) => model.id)).toEqual([
+      "@cf/zai-org/glm-5.3-flash",
       "@cf/moonshotai/kimi-k2.7-code",
       "@cf/moonshotai/kimi-k2.6",
       "@cf/deepseek-ai/deepseek-v4-pro-0813",
@@ -69,8 +70,8 @@ describe("Cloudflare-hosted chat catalog", () => {
     ]);
   });
 
-  it("places GLM 5.3 Flash immediately after GLM 5.2", () => {
+  it("keeps GLM 5.3 Flash first even when the full catalog is price-sorted", () => {
     const ids = sortModelsByPrice(FALLBACK_MODELS).map((model) => model.id);
-    expect(ids.indexOf("@cf/zai-org/glm-5.3-flash")).toBe(ids.indexOf("@cf/zai-org/glm-5.2") + 1);
+    expect(ids[0]).toBe("@cf/zai-org/glm-5.3-flash");
   });
 });

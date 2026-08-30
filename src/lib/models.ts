@@ -4,9 +4,10 @@ import type { ModelInfo } from "../types";
 
 export const FALLBACK_MODELS = catalog.models as ModelInfo[];
 export const CATALOG_SYNCED_AT = catalog.syncedAt;
-export const DEFAULT_MODEL_ID = "@cf/moonshotai/kimi-k2.7-code";
+export const DEFAULT_MODEL_ID = "@cf/zai-org/glm-5.3-flash";
 
 const MODEL_DISPLAY_PRIORITY = [
+  "@cf/zai-org/glm-5.3-flash",
   "@cf/moonshotai/kimi-k2.7-code",
   "@cf/moonshotai/kimi-k2.6",
   "@cf/deepseek-ai/deepseek-v4-pro-0813",
@@ -62,16 +63,6 @@ export const sortModelsByPrice = (
     const favoriteDifference = Number(favoriteIds.includes(b.id)) - Number(favoriteIds.includes(a.id));
     return favoriteDifference || a.provider.localeCompare(b.provider) || a.name.localeCompare(b.name);
   });
-
-  const glm52Id = "@cf/zai-org/glm-5.2";
-  const glm53Id = "@cf/zai-org/glm-5.3-flash";
-  const glm52Index = sorted.findIndex((model) => model.id === glm52Id);
-  const glm53Index = sorted.findIndex((model) => model.id === glm53Id);
-  if (glm52Index >= 0 && glm53Index >= 0 && glm53Index !== glm52Index + 1) {
-    const [glm53] = sorted.splice(glm53Index, 1);
-    const updatedGlm52Index = sorted.findIndex((model) => model.id === glm52Id);
-    sorted.splice(updatedGlm52Index + 1, 0, glm53);
-  }
 
   return sorted;
 };

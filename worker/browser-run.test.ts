@@ -3,6 +3,7 @@ import {
   BrowserRunError,
   parseDuckDuckGoResults,
   runBrowserMarkdown,
+  runBrowserScreenshot,
   validatePublicWebUrl,
 } from "./browser-run";
 
@@ -47,6 +48,46 @@ describe("Browser Run public-web client", () => {
     });
     expect((body.allowRequestPattern as string[])[0]).toContain("developers\\.cloudflare\\.com");
     expect(result).toMatchObject({ browserMs: 321, accountId: credential.accountId });
+  });
+
+  it("captures a PNG with the requested viewport through the selected public account", async () => {
+    const credential = { accountId: "b".repeat(32), apiToken: "screenshot-token-value-1234567890" };
+    const png = new Uint8Array(24);
+    png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const view = new DataView(png.buffer);
+    view.setUint32(16, 390);
+    view.setUint32(20, 1440);
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(png, {
+      headers: { "content-type": "image/png", "x-browser-ms-used": "456" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await runBrowserScreenshot(
+      credential,
+      "https://example.com/product",
+      { fullPage: true, viewport: "mobile" },
+    );
+    const [requestUrl, init] = fetchMock.mock.calls[0];
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+
+    expect(String(requestUrl)).toContain(`/accounts/${credential.accountId}/browser-rendering/screenshot`);
+    expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${credential.apiToken}`);
+    expect(body).toMatchObject({
+      url: "https://example.com/product",
+      screenshotOptions: { fullPage: true, type: "png" },
+      viewport: { width: 390, height: 844, deviceScaleFactor: 1, isMobile: true },
+      actionTimeout: 25_000,
+      bestAttempt: true,
+    });
+    expect((body.allowRequestPattern as string[])[0]).toContain("example\\.com");
+    expect(result).toMatchObject({
+      mimeType: "image/png",
+      width: 390,
+      height: 1440,
+      browserMs: 456,
+      accountId: credential.accountId,
+    });
+    expect(result.bytes).toEqual(png);
   });
 
   it("extracts real result links and unwraps DuckDuckGo redirects", () => {

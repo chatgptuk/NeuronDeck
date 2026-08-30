@@ -21,6 +21,22 @@ describe("Workers AI stream parser", () => {
       .toEqual({ generatedImage: { id: "1", dataUrl: "data:image/png;base64,abc" } });
   });
 
+  it("parses completed Browser Run screenshots", () => {
+    expect(parseSseData('{"browser_screenshot":{"id":"shot-1","dataUrl":"data:image/png;base64,abc","url":"https://example.com/","title":"example.com","width":1280,"height":800,"fullPage":false,"viewport":"desktop"}}'))
+      .toEqual({
+        browserScreenshot: {
+          id: "shot-1",
+          dataUrl: "data:image/png;base64,abc",
+          url: "https://example.com/",
+          title: "example.com",
+          width: 1280,
+          height: 800,
+          fullPage: false,
+          viewport: "desktop",
+        },
+      });
+  });
+
   it("rejects streams that close without a completion marker", async () => {
     const response = new Response('data: {"response":"partial"}\n\n');
     await expect(consumeChatStream(response, () => undefined)).rejects.toBeInstanceOf(StreamInterruptedError);
