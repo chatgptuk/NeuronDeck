@@ -12,4 +12,12 @@ describe("static security headers", () => {
     expect(contentSecurityPolicy).toContain("media-src 'self' blob:");
     expect(contentSecurityPolicy).toContain("object-src 'none'");
   });
+
+  it("revalidates HTML while keeping content-hashed assets immutable", () => {
+    const headers = readFileSync("public/_headers", "utf8");
+
+    expect(headers).toMatch(/\/\n\s+Cache-Control: no-cache, no-store, must-revalidate/);
+    expect(headers).toMatch(/\/\*\.html\n\s+Cache-Control: no-cache, no-store, must-revalidate/);
+    expect(headers).toMatch(/\/assets\/\*\n\s+Cache-Control: public, max-age=31536000, immutable/);
+  });
 });

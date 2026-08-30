@@ -97,6 +97,7 @@ import {
 import type { Attachment, ChatMessage, Conversation, GeneratedImage, ModelInfo, WorkspaceState } from "./types";
 import { AttachmentStrip } from "./components/AttachmentStrip";
 import { GeneratedImageGallery } from "./components/GeneratedImageGallery";
+import { ModelPicker } from "./components/ModelPicker";
 import {
   ChatGlyph,
   CodeGlyph,
@@ -108,9 +109,6 @@ import { ProviderLogo } from "./components/ProviderLogo";
 
 const MarkdownMessage = lazy(() =>
   import("./components/MarkdownMessage").then((module) => ({ default: module.MarkdownMessage })),
-);
-const ModelPicker = lazy(() =>
-  import("./components/ModelPicker").then((module) => ({ default: module.ModelPicker })),
 );
 
 const id = (): string => crypto.randomUUID();
@@ -1857,18 +1855,16 @@ function App() {
       </main>
 
       {modelPickerOpen && (
-        <Suspense fallback={null}>
-          <ModelPicker
-            models={models}
-            selectedId={activeConversation.modelId}
-            favoriteIds={workspace.favoriteModelIds}
-            syncedAt={catalogSyncedAt}
-            language={language}
-            onSelect={selectModel}
-            onToggleFavorite={toggleFavorite}
-            onClose={() => setModelPickerOpen(false)}
-          />
-        </Suspense>
+        <ModelPicker
+          models={models}
+          selectedId={activeConversation.modelId}
+          favoriteIds={workspace.favoriteModelIds}
+          syncedAt={catalogSyncedAt}
+          language={language}
+          onSelect={selectModel}
+          onToggleFavorite={toggleFavorite}
+          onClose={() => setModelPickerOpen(false)}
+        />
       )}
     </div>
   );
