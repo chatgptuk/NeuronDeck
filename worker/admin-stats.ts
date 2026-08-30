@@ -1,4 +1,7 @@
 import { getOAuthSession, type CloudflareOAuthEnv } from "./cloudflare-oauth";
+import { hasAdminAccount, hasConfiguredAdmin } from "./admin-access";
+
+export { hasAdminAccount } from "./admin-access";
 
 export type AnalyticsEvent = "visit" | "chat" | "image" | "tts" | "error";
 
@@ -81,21 +84,6 @@ const hashClientId = async (clientId: string): Promise<string> => {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 };
 
-const configuredAdminIds = (value?: string): Set<string> => new Set(
-  (value ?? "")
-    .split(",")
-    .map((item) => item.trim().toLowerCase())
-    .filter((item) => /^[a-f0-9]{32}$/.test(item)),
-);
-
-export const hasAdminAccount = (
-  accounts: ReadonlyArray<{ id: string }>,
-  configuredIds?: string,
-): boolean => {
-  const allowed = configuredAdminIds(configuredIds);
-  return allowed.size > 0 && accounts.some((account) => allowed.has(account.id.toLowerCase()));
-};
-
 const increments: Record<AnalyticsEvent, TotalsRow> = {
   visit: { visits: 1, chats: 0, images: 0, tts: 0, errors: 0 },
   chat: { visits: 0, chats: 1, images: 0, tts: 0, errors: 0 },
@@ -163,7 +151,7 @@ export const handleAdminStatsRoute = async (
   env: AdminStatsEnv,
 ): Promise<Response> => {
   const database = env.METRICS_DB;
-  if (!database || configuredAdminIds(env.ADMIN_ACCOUNT_ID).size === 0) {
+  if (!database || !hasConfiguredAdmin(env.ADMIN_ACCOUNT_ID)) {
     return errorResponse("The private admin dashboard is not configured.", 503, "admin_unavailable");
   }
 

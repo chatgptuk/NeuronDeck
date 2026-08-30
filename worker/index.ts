@@ -10,6 +10,7 @@ import {
   recordAnalyticsEvent,
   type AdminStatsEnv,
 } from "./admin-stats";
+import { hasAdminAccount } from "./admin-access";
 import catalog from "../src/data/models.generated.json";
 import { buildAiMessages, parseApiMessages } from "../src/lib/chat-input";
 import {
@@ -291,7 +292,10 @@ type AiResolution =
 
 const resolveAiForRequest = async (request: Request, env: Env): Promise<AiResolution> => {
   const oauth = await getOAuthSession(request, env);
-  if (oauth.kind === "anonymous") {
+  const useSiteQuota = oauth.kind === "anonymous" || (
+    oauth.kind === "authenticated" && hasAdminAccount(oauth.context.accounts, env.ADMIN_ACCOUNT_ID)
+  );
+  if (useSiteQuota) {
     const pool = readPublicAiPoolConfig(env.PUBLIC_AI_ACCOUNTS);
     if (pool.state === "invalid") {
       console.error("Public Cloudflare AI pool configuration is invalid.", { message: pool.message });

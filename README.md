@@ -140,6 +140,8 @@ Cloudflare 文档：[Workers AI REST API](https://developers.cloudflare.com/work
 
 后台位于 `/admin`，复用上面的 Cloudflare OAuth 登录。只有 `ADMIN_ACCOUNT_ID` Secret 中列出的 Cloudflare Account ID 才能读取统计；普通用户即使连接自己的 Cloudflare 账户也无法访问。
 
+管理员登录只用于后台鉴权：管理员返回前台后，聊天、生图、语音与文件处理仍使用本站公共额度。其他用户连接 Cloudflare 后继续使用其所选账户的 Workers AI 额度。
+
 ```bash
 wrangler secret put ADMIN_ACCOUNT_ID --config .wrangler.production.jsonc
 ```

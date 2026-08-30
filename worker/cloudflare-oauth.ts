@@ -1,4 +1,5 @@
 import { readPublicAiPoolConfig } from "./public-ai-pool";
+import { hasAdminAccount } from "./admin-access";
 
 const AUTHORIZE_ENDPOINT = "https://dash.cloudflare.com/oauth2/auth";
 const TOKEN_ENDPOINT = "https://dash.cloudflare.com/oauth2/token";
@@ -15,6 +16,7 @@ export interface CloudflareOAuthEnv {
   CLOUDFLARE_OAUTH_SCOPES?: string;
   OAUTH_SESSION_SECRET?: string;
   PUBLIC_AI_ACCOUNTS?: string;
+  ADMIN_ACCOUNT_ID?: string;
 }
 
 export interface CloudflareAccount {
@@ -395,6 +397,7 @@ const sessionStatus = async (request: Request, env: CloudflareOAuthEnv): Promise
     return response;
   }
   const activeAccount = lookup.context.accounts.find((account) => account.id === lookup.context.accountId);
+  const usesSiteQuota = hasAdminAccount(lookup.context.accounts, env.ADMIN_ACCOUNT_ID);
   return json({
     configured: true,
     authenticated: true,
@@ -402,6 +405,7 @@ const sessionStatus = async (request: Request, env: CloudflareOAuthEnv): Promise
     accounts: lookup.context.accounts,
     activeAccountId: lookup.context.accountId,
     activeAccountName: activeAccount?.name || lookup.context.accountId,
+    usesSiteQuota,
   });
 };
 

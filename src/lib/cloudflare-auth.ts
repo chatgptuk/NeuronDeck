@@ -10,6 +10,7 @@ export interface CloudflareAuthStatus {
   accounts: CloudflareAccount[];
   activeAccountId?: string;
   activeAccountName?: string;
+  usesSiteQuota: boolean;
   error?: string;
 }
 
@@ -33,6 +34,7 @@ export const getCloudflareAuthStatus = async (): Promise<CloudflareAuthStatus> =
     accounts: Array.isArray(status.accounts) ? status.accounts : [],
     activeAccountId: status.activeAccountId,
     activeAccountName: status.activeAccountName,
+    usesSiteQuota: status.usesSiteQuota === true,
     error: status.error,
   };
 };

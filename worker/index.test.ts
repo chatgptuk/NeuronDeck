@@ -9,6 +9,41 @@ const publicPoolAccounts = [
   { accountId: "1".repeat(32), apiToken: "a".repeat(40) },
   { accountId: "2".repeat(32), apiToken: "b".repeat(40) },
 ];
+const oauthSecret = btoa("0123456789abcdef0123456789abcdef");
+
+const bytesToBase64Url = (bytes: Uint8Array): string => {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
+};
+
+const createOAuthSessionEnv = async (accountId: string, accessToken: string, sessionId: string) => {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode("0123456789abcdef0123456789abcdef"),
+    "AES-GCM",
+    false,
+    ["encrypt"],
+  );
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const payload = new TextEncoder().encode(JSON.stringify({
+    accessToken,
+    expiresAt: Date.now() + 3_600_000,
+    scope: "ai.read account-settings.read offline_access",
+    accounts: [{ id: accountId, name: `Account ${accountId.slice(0, 4)}` }],
+    activeAccountId: accountId,
+    createdAt: Date.now(),
+  }));
+  const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, payload);
+  const stored = `${bytesToBase64Url(iv)}.${bytesToBase64Url(new Uint8Array(encrypted))}`;
+  return {
+    AUTH_SESSIONS: {
+      get: vi.fn(async (keyName: string) => keyName === `session:${sessionId}` ? stored : null),
+    },
+    CLOUDFLARE_OAUTH_CLIENT_ID: "oauth-client-id",
+    OAUTH_SESSION_SECRET: oauthSecret,
+  };
+};
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -48,13 +83,14 @@ const requestFor = (model: string) =>
     }),
   });
 
-const textRequestFor = (model: string, maxTokens?: number) =>
+const textRequestFor = (model: string, maxTokens?: number, sessionId?: string) =>
   new Request("https://ai.chatgpt.org.uk/api/chat", {
     method: "POST",
     headers: {
       "content-type": "application/json",
       origin: "https://ai.chatgpt.org.uk",
       "x-neurondeck-client": "integration-test-client",
+      ...(sessionId ? { cookie: `neurondeck_cf_session=${sessionId}` } : {}),
     },
     body: JSON.stringify({
       model,
@@ -310,6 +346,83 @@ describe("public Cloudflare AI account pool", () => {
     expect(publicPoolAccounts.some((account) => authorization === `Bearer ${account.apiToken}`)).toBe(true);
     expect(body).not.toContain(publicPoolAccounts[0].accountId);
     expect(body).not.toContain(publicPoolAccounts[0].apiToken);
+  });
+
+  it("keeps an authenticated administrator on the site's public quota", async () => {
+    const administratorId = "a".repeat(32);
+    const administratorToken = "administrator-oauth-token";
+    const sessionId = "administrator-session";
+    const oauthEnv = await createOAuthSessionEnv(administratorId, administratorToken, sessionId);
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response('data: {"response":"admin public pool"}\n\ndata: [DONE]\n\n', {
+        headers: { "content-type": "text/event-stream" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { env, run } = createEnv();
+    const publicLimit = vi.fn(async () => ({ success: true }));
+    const completeEnv = {
+      ...env,
+      ...oauthEnv,
+      ADMIN_ACCOUNT_ID: administratorId,
+      PUBLIC_AI_ACCOUNTS: JSON.stringify({ accounts: publicPoolAccounts }),
+      PUBLIC_AI_RATE_LIMITER: { limit: publicLimit },
+    };
+
+    const sessionResponse = await worker.fetch(new Request("https://ai.chatgpt.org.uk/api/auth/session", {
+      headers: { cookie: `neurondeck_cf_session=${sessionId}` },
+    }), completeEnv as never);
+    const session = await sessionResponse.json() as { authenticated: boolean; usesSiteQuota: boolean };
+    const response = await worker.fetch(textRequestFor(chatModel, undefined, sessionId), completeEnv as never);
+    const body = await response.text();
+
+    expect(session).toMatchObject({ authenticated: true, usesSiteQuota: true });
+    expect(response.status).toBe(200);
+    expect(body).toContain("admin public pool");
+    expect(run).not.toHaveBeenCalled();
+    expect(publicLimit).toHaveBeenCalledWith({ key: "public-ai-pool" });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, init] = fetchMock.mock.calls[0];
+    const authorization = new Headers(init?.headers).get("authorization");
+    expect(String(url)).toContain(`/accounts/${publicPoolAccounts[0].accountId}/ai/run/`);
+    expect(authorization).toBe(`Bearer ${publicPoolAccounts[0].apiToken}`);
+    expect(authorization).not.toContain(administratorToken);
+  });
+
+  it("continues to use an authenticated non-admin account's quota", async () => {
+    const userAccountId = "b".repeat(32);
+    const userAccessToken = "ordinary-user-oauth-token";
+    const sessionId = "ordinary-user-session";
+    const oauthEnv = await createOAuthSessionEnv(userAccountId, userAccessToken, sessionId);
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response('data: {"response":"personal quota"}\n\ndata: [DONE]\n\n', {
+        headers: { "content-type": "text/event-stream" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { env } = createEnv();
+    const publicLimit = vi.fn(async () => ({ success: true }));
+    const completeEnv = {
+      ...env,
+      ...oauthEnv,
+      ADMIN_ACCOUNT_ID: "c".repeat(32),
+      PUBLIC_AI_ACCOUNTS: JSON.stringify({ accounts: publicPoolAccounts }),
+      PUBLIC_AI_RATE_LIMITER: { limit: publicLimit },
+    };
+
+    const sessionResponse = await worker.fetch(new Request("https://ai.chatgpt.org.uk/api/auth/session", {
+      headers: { cookie: `neurondeck_cf_session=${sessionId}` },
+    }), completeEnv as never);
+    const session = await sessionResponse.json() as { authenticated: boolean; usesSiteQuota: boolean };
+    const response = await worker.fetch(textRequestFor(chatModel, undefined, sessionId), completeEnv as never);
+    const body = await response.text();
+
+    expect(session).toMatchObject({ authenticated: true, usesSiteQuota: false });
+    expect(response.status).toBe(200);
+    expect(body).toContain("personal quota");
+    expect(publicLimit).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain(`/accounts/${userAccountId}/ai/run/`);
+    expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${userAccessToken}`);
   });
 
   it("fails over to the next public account on quota or authorization errors", async () => {

@@ -140,6 +140,8 @@ Cloudflare documentation: [Workers AI REST API](https://developers.cloudflare.co
 
 The dashboard lives at `/admin` and reuses the Cloudflare OAuth login above. Only a Cloudflare Account ID listed in the `ADMIN_ACCOUNT_ID` Secret can read statistics; regular users cannot access it after connecting their own accounts.
 
+Administrator sign-in is used only for dashboard authorization. When an administrator returns to the workspace, chat, image generation, speech, and file processing continue to use the site's public quota. Other connected users continue to use Workers AI quota from their selected account.
+
 ```bash
 wrangler secret put ADMIN_ACCOUNT_ID --config .wrangler.production.jsonc
 ```

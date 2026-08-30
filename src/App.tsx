@@ -238,6 +238,7 @@ function App() {
     configured: false,
     authenticated: false,
     publicPoolConfigured: false,
+    usesSiteQuota: false,
     accounts: [],
   });
   const [cloudflareAuthBusy, setCloudflareAuthBusy] = useState(true);
@@ -1386,11 +1387,11 @@ function App() {
               className={cloudflareAuth.authenticated ? "cloud-account-button connected" : "cloud-account-button"}
               onClick={() => setInspectorOpen(true)}
               aria-label={t.cloudflareAccount}
-              title={cloudflareAuth.authenticated ? cloudflareAuth.activeAccountName : siteQuotaLabel}
+              title={cloudflareAuth.authenticated && !cloudflareAuth.usesSiteQuota ? cloudflareAuth.activeAccountName : siteQuotaLabel}
               type="button"
             >
               <Cloud size={17} />
-              <span>{cloudflareAuth.authenticated ? cloudflareAuth.activeAccountName : siteQuotaLabel}</span>
+              <span>{cloudflareAuth.authenticated && !cloudflareAuth.usesSiteQuota ? cloudflareAuth.activeAccountName : siteQuotaLabel}</span>
             </button>
             <button
               className="language-toggle"
@@ -1665,13 +1666,15 @@ function App() {
                 <div className="cloudflare-account-heading">
                   <span className="cloudflare-mark"><Cloud size={18} /></span>
                   <div>
-                    <strong>{cloudflareAuth.authenticated ? cloudflareAuth.activeAccountName : siteQuotaLabel}</strong>
-                    <span>{cloudflareAuth.authenticated ? t.cloudflareConnected : siteQuotaDescription}</span>
+                    <strong>{cloudflareAuth.authenticated && !cloudflareAuth.usesSiteQuota ? cloudflareAuth.activeAccountName : siteQuotaLabel}</strong>
+                    <span>{cloudflareAuth.authenticated
+                      ? cloudflareAuth.usesSiteQuota ? t.cloudflareAdminSiteQuota : t.cloudflareConnected
+                      : siteQuotaDescription}</span>
                   </div>
                 </div>
                 {cloudflareAuth.authenticated ? (
                   <>
-                    {cloudflareAuth.accounts.length > 1 ? (
+                    {cloudflareAuth.accounts.length > 1 && !cloudflareAuth.usesSiteQuota ? (
                       <label className="cloudflare-account-select">
                         <span>{t.cloudflareSelectAccount}</span>
                         <select
