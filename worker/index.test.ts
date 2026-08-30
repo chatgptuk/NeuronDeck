@@ -978,6 +978,119 @@ describe("image generation function calling", () => {
     expect(body).toContain("十张图片已经生成");
   });
 
+  it("uses three shared transient-failure attempts to still deliver ten successful images", async () => {
+    const chatInputs: Array<Record<string, unknown>> = [];
+    let imageAttempts = 0;
+    let chatRound = 0;
+    const imageRateLimiter = { limit: vi.fn(async () => ({ success: true })) };
+    const ai = {
+      run: vi.fn(async (model: string, input: Record<string, unknown>) => {
+        if (model === imageModel) {
+          imageAttempts += 1;
+          if (imageAttempts <= 3) throw new Error("Temporary upstream capacity error");
+          return { image: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB" };
+        }
+        chatInputs.push(input);
+        chatRound += 1;
+        if (chatRound === 1) {
+          return {
+            choices: [{ message: { tool_calls: Array.from({ length: 10 }, (_, index) => ({
+              id: `recoverable-image-${index + 1}`,
+              type: "function",
+              function: {
+                name: "generate_image",
+                arguments: JSON.stringify({
+                  prompt: `A resilient abstract image numbered ${index + 1}`,
+                  operation: "generate",
+                }),
+              },
+            })) } }],
+          };
+        }
+        return { response: "失败的图片已自动补齐，共生成十张。" };
+      }),
+      toMarkdown: vi.fn(),
+    };
+    const response = await worker.fetch(new Request("https://ai.chatgpt.org.uk/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "accept-language": "zh-CN",
+        "x-neurondeck-client": "ten-image-recovery-client",
+      },
+      body: JSON.stringify({
+        model: chatModel,
+        imageModel,
+        messages: [{ role: "user", content: "生成十张不同的抽象图片" }],
+      }),
+    }), {
+      AI: ai,
+      ASSETS: { fetch: vi.fn() },
+      CHAT_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+      IMAGE_RATE_LIMITER: imageRateLimiter,
+    } as never);
+    const body = await response.text();
+    const finalMessages = chatInputs[1].messages as Array<{ role?: string; content?: string }>;
+
+    expect(imageAttempts).toBe(13);
+    expect(imageRateLimiter.limit).toHaveBeenCalledTimes(13);
+    expect((body.match(/"generated_image"/g) ?? [])).toHaveLength(10);
+    expect((body.match(/"status":"error"/g) ?? [])).toHaveLength(0);
+    expect(finalMessages.filter((message) => message.role === "tool").every((message) => message.content?.includes('"ok":true'))).toBe(true);
+    expect(body).toContain("失败的图片已自动补齐");
+  });
+
+  it("does not retry a deterministic missing-reference image error", async () => {
+    let chatRound = 0;
+    let imageModelCalls = 0;
+    const imageRateLimiter = { limit: vi.fn(async () => ({ success: true })) };
+    const ai = {
+      run: vi.fn(async (model: string) => {
+        if (model === imageModel) {
+          imageModelCalls += 1;
+          return { image: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB" };
+        }
+        chatRound += 1;
+        if (chatRound === 1) {
+          return { choices: [{ message: { tool_calls: [{
+            id: "missing-reference-edit",
+            type: "function",
+            function: {
+              name: "generate_image",
+              arguments: JSON.stringify({ prompt: "Edit the unavailable image", operation: "edit" }),
+            },
+          }] } }] };
+        }
+        return { response: "没有找到可编辑的图片。" };
+      }),
+      toMarkdown: vi.fn(),
+    };
+    const response = await worker.fetch(new Request("https://ai.chatgpt.org.uk/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "accept-language": "zh-CN",
+        "x-neurondeck-client": "deterministic-image-error-client",
+      },
+      body: JSON.stringify({
+        model: chatModel,
+        imageModel,
+        messages: [{ role: "user", content: "把上一张图改成蓝色" }],
+      }),
+    }), {
+      AI: ai,
+      ASSETS: { fetch: vi.fn() },
+      CHAT_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+      IMAGE_RATE_LIMITER: imageRateLimiter,
+    } as never);
+    const body = await response.text();
+
+    expect(imageRateLimiter.limit).toHaveBeenCalledOnce();
+    expect(imageModelCalls).toBe(0);
+    expect((body.match(/"status":"error"/g) ?? [])).toHaveLength(1);
+    expect(body).toContain("没有找到可编辑的上一张图片");
+  });
+
   it("reuses identical successful calls from earlier rounds without collapsing same-round requests", async () => {
     const chatInputs: Array<Record<string, unknown>> = [];
     let imageCalls = 0;

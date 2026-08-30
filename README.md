@@ -37,7 +37,7 @@ NeuronDeck 把 Cloudflare 托管的对话模型、多模态输入、图片生成
 - IndexedDB 本地对话历史、移动端优化、消息时间与生成耗时
 - 可选站点公共额度池：管理员可安全接入多个 Cloudflare 账户，自动分流并在额度故障时切换
 - 可选 Cloudflare OAuth：用户可授权自己的账户并使用自己的 Workers AI 额度
-- 多轮 Function Calling：单次回复可连续调用多个工具、生成最多 10 张图片，并通过 Browser Run 搜索、读取和截取公开网页
+- 多轮 Function Calling：单次回复可连续调用多个工具、获得最多 10 张成功图片；临时生图失败共享 3 次自动补偿机会，并通过 Browser Run 搜索、读取和截取公开网页
 - AI 文件工具：模型可在对话中真正创建并发送 TXT、Markdown、PDF、CSV 与 JSON 下载文件；PDF 使用安全的 Markdown 到 HTML 渲染链路
 - 服务端为每次请求注入可信当前时间与浏览器时区；无需联网即可正确判断今天、过去与未来日期
 - 可选“模型健康与成本中心”：按模型统计成功率、首字耗时、总耗时、Token、工具调用和估算聊天成本，并保留匿名访问趋势
@@ -109,7 +109,7 @@ Cloudflare 文档：[启用 R2](https://developers.cloudflare.com/r2/get-started
 
    使用公开模板时，将配置路径换成 `wrangler.jsonc`。删除这个 Secret 即可停用额度池并恢复使用 Worker 所属账户的 AI Binding。
 
-公共池在每个 Cloudflare 边缘位置额外受每分钟 60 次的池级限流保护；每位访客的聊天请求限制为每分钟 10 次，语音合成限制为每分钟 6 次。Secret 格式不合法时服务会拒绝匿名 AI 请求，不会静默消耗主站账户额度。Cloudflare 对单个 Secret/环境变量限制为 5 KB。
+公共池在每个 Cloudflare 边缘位置额外受每分钟 60 次的池级限流保护；每位访客的聊天请求限制为每分钟 10 次，生图尝试限制为每分钟 15 次，语音合成限制为每分钟 6 次。单轮最多返回 10 张成功图片，并额外保留 3 次可恢复失败的自动补偿尝试；无效参数、引用图缺失和内容策略拒绝不会盲目重试。Secret 格式不合法时服务会拒绝匿名 AI 请求，不会静默消耗主站账户额度。Cloudflare 对单个 Secret/环境变量限制为 5 KB。
 
 Browser Run 使用无状态 Quick Actions：页面读取、截图与 PDF 渲染都有 45 秒硬超时，请求完成或中断后不保留浏览器会话、Cookie 或后台标签页。截图会作为真实图片显示并可下载，但不会继承用户本地浏览器的登录状态。每轮对话最多执行 4 次 Browser Run 操作，避免意外消耗额度。
 

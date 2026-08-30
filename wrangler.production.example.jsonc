@@ -74,6 +74,14 @@
       }
     },
     {
+      "name": "IMAGE_RATE_LIMITER",
+      "namespace_id": "1004",
+      "simple": {
+        "limit": 15,
+        "period": 60
+      }
+    },
+    {
       "name": "PUBLIC_AI_RATE_LIMITER",
       "namespace_id": "1002",
       "simple": {

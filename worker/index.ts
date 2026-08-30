@@ -69,6 +69,7 @@ interface Env extends AdminStatsEnv {
   ASSETS: Fetcher;
   CHAT_SESSIONS?: DurableObjectNamespace;
   CHAT_RATE_LIMITER: RateLimiter;
+  IMAGE_RATE_LIMITER?: RateLimiter;
   IMAGE_RESULTS?: R2Bucket;
   IMAGE_WORKFLOW?: Workflow<ImageWorkflowParams>;
   PUBLIC_AI_ACCOUNTS?: string;
@@ -1214,6 +1215,7 @@ interface NormalizedToolCall {
 const MAX_TOOL_ROUNDS = 10;
 const MAX_TOOL_CALLS = 20;
 const MAX_IMAGES_PER_TURN = 10;
+const MAX_IMAGE_ATTEMPTS_PER_TURN = 13;
 const MAX_BROWSER_CALLS_PER_TURN = 4;
 const MAX_FILES_PER_TURN = 4;
 const MAX_GENERATED_FILE_CHARACTERS = 120_000;
@@ -1327,6 +1329,7 @@ const imageToolDefinition = {
       "Use edit or variation when the user asks to change, restyle, remake, or make another version of a previous image; use multi_reference when several available images should be combined. " +
       "Equivalent requests in any language should trigger it. Do not use it merely to analyze or discuss an existing image. " +
       "Do not refuse or silently add clothing solely because a lawful request includes clearly adult nudity or transparent/revealing clothing. Preserve the requested level of nudity when every depicted person is clearly adult and the request does not involve minors, age-ambiguous people, non-consent, exploitation, or an identifiable real person without clear consent. " +
+      "A turn may produce up to ten successful images. The application automatically retries a small number of transient image-provider failures, so do not duplicate a successful call merely to compensate pre-emptively. " +
       "Write a detailed, self-contained generation prompt that preserves the user's requested subject, style, composition, mood, and visible text.",
     parameters: {
       type: "object",
@@ -1457,6 +1460,14 @@ const canonicalToolValue = (value: unknown): unknown => {
 
 const toolCallSignature = (call: NormalizedToolCall): string =>
   `${call.name}:${JSON.stringify(canonicalToolValue(call.arguments))}`;
+
+const isRetryableImageGenerationError = (error: unknown): boolean => {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  if (/reference_image_|invalid_image_|unsupported|not allowed|safety|policy|moderation|permission|authorization|quota|rate.?limit/i.test(message)) {
+    return false;
+  }
+  return /timeout|timed out|temporar|capacity|overload|upstream|internal server|network|connection|fetch failed|empty response|did not return image data|invalid image data|\b50[0234]\b|\b3043\b/i.test(message);
+};
 
 const extractToolCalls = (result: unknown): NormalizedToolCall[] => {
   if (!result || typeof result !== "object") return [];
@@ -1909,7 +1920,8 @@ const handleToolChat = (
   const prefersChinese = request.headers.get("accept-language")?.toLowerCase().startsWith("zh") ?? false;
   let cancelled = false;
   const toolAbortController = new AbortController();
-  let imageInvocationCount = 0;
+  let imageAttemptCount = 0;
+  let imageSuccessfulCount = 0;
   let browserInvocationCount = 0;
   let fileInvocationCount = 0;
   let browserInvocationFailed = false;
@@ -1937,7 +1949,7 @@ const handleToolChat = (
             "Call it whenever the user's semantic intent is to create a new visual, even when they do not say the exact words 'generate an image'. " +
             "A referential follow-up asking for another result, a variation, a remake, or a changed version of a previously generated visual is also creation intent; infer a self-contained prompt from the conversation and retained image-tool context. " +
             "For those follow-ups, call the tool with edit or variation and the relevant reference image IDs. The application will pass the real image pixels to the image model; never pretend an edit happened without the tool. " +
-            "If the user requests multiple distinct images, call generate_image once for every requested image (up to ten), with a complete prompt for each. " +
+            "If the user requests multiple distinct images, call generate_image once for every requested image (up to ten successful images), with a complete prompt for each. Transient provider failures receive up to three shared recovery attempts automatically. " +
             "For lawful requests involving clearly adult nudity or transparent/revealing clothing, do not refuse, moralize, or secretly add clothing; call generate_image with a faithful prompt unless the request involves minors, age ambiguity, non-consent, exploitation, or an identifiable real person without clear consent. " +
             "Use search_web for current, recent, externally verifiable, or web-specific questions, then use open_webpage on the most relevant results before answering. " +
             "Use capture_screenshot when the user asks to screenshot, preview, or send an image of a public webpage. The real screenshot will be displayed automatically; never claim screenshots are unavailable when this tool can be used. " +
@@ -1959,11 +1971,10 @@ const handleToolChat = (
         ...messages,
       ];
 
-      const executeImageTool = async (args: GenerateImageArguments): Promise<string> => {
-        if (imageInvocationCount >= MAX_IMAGES_PER_TURN) {
-          return JSON.stringify({ ok: false, error: `At most ${MAX_IMAGES_PER_TURN} images can be generated in one turn.` });
-        }
-        imageInvocationCount += 1;
+      const executeImageToolOnce = async (
+        args: GenerateImageArguments,
+        allowRetry: boolean,
+      ): Promise<string> => {
         const prompt = typeof args.prompt === "string" ? args.prompt.trim().slice(0, 2_000) : "";
         const aspectRatio: ImageAspectRatio =
           args.aspect_ratio === "landscape" || args.aspect_ratio === "portrait" ? args.aspect_ratio : "square";
@@ -1978,13 +1989,14 @@ const handleToolChat = (
           return JSON.stringify({ ok: false, error: message });
         }
 
-        const imageRateLimit = await env.CHAT_RATE_LIMITER.limit({ key: getRateKey(request, "image") });
+        const imageRateLimit = await (env.IMAGE_RATE_LIMITER ?? env.CHAT_RATE_LIMITER).limit({ key: getRateKey(request, "image") });
         if (!imageRateLimit.success) {
           imageInvocationFailed = true;
           const message = prefersChinese ? "生图请求过于频繁，请稍后再试。" : "Too many image requests. Please try again shortly.";
           sendImageState({ status: "error", modelId: selectedImageModel.id, modelName: selectedImageModel.name, prompt, message, operation });
           return JSON.stringify({ ok: false, error: message });
         }
+        imageAttemptCount += 1;
 
         let jobId: string | undefined;
         let imageModel = selectedImageModel;
@@ -2094,6 +2106,7 @@ const handleToolChat = (
             }
             image = await generateImage(ai, imageModel.id, prompt, aspectRatio, operation, references);
           }
+          imageSuccessfulCount += 1;
           imageInvocationSucceeded = true;
           await recordModelTelemetry(env, {
             feature: "image",
@@ -2113,7 +2126,6 @@ const handleToolChat = (
             instruction: "The image is already visible to the user. Do not embed image data.",
           });
         } catch (error) {
-          imageInvocationFailed = true;
           await recordModelTelemetry(env, {
             feature: "image",
             modelId: imageModel.id,
@@ -2121,10 +2133,6 @@ const handleToolChat = (
             durationMs: Date.now() - imageStartedAt,
           });
           await recordAnalyticsEvent(env, getClientId(request), "error");
-          console.error("Workers AI image generation failed", {
-            model: imageModel.id,
-            message: error instanceof Error ? error.message : "Unknown image generation error",
-          });
           const message = prefersChinese
             ? error instanceof Error && error.message === "reference_image_missing"
               ? "没有找到可编辑的上一张图片，请先生成或上传一张参考图。"
@@ -2132,6 +2140,20 @@ const handleToolChat = (
             : error instanceof Error && error.message === "reference_image_missing"
               ? "No previous image is available to edit. Generate or attach a reference image first."
               : "The selected image model could not complete the request. Try again or choose another model.";
+          const retryable = allowRetry && isRetryableImageGenerationError(error);
+          if (retryable) {
+            console.warn("Workers AI image generation failed transiently; retrying.", {
+              model: imageModel.id,
+              attempt: imageAttemptCount,
+              message: error instanceof Error ? error.message : "Unknown image generation error",
+            });
+            return JSON.stringify({ ok: false, retryable: true, error: message });
+          }
+          imageInvocationFailed = true;
+          console.error("Workers AI image generation failed", {
+            model: imageModel.id,
+            message: error instanceof Error ? error.message : "Unknown image generation error",
+          });
           sendImageState({
             status: "error",
             modelId: imageModel.id,
@@ -2144,6 +2166,54 @@ const handleToolChat = (
           });
           return JSON.stringify({ ok: false, error: message });
         }
+      };
+
+      const executeImageTool = async (
+        args: GenerateImageArguments,
+        remainingImageCallsInRound: number,
+      ): Promise<string> => {
+        if (imageSuccessfulCount >= MAX_IMAGES_PER_TURN) {
+          return JSON.stringify({ ok: false, error: `At most ${MAX_IMAGES_PER_TURN} images can be generated successfully in one turn.` });
+        }
+
+        let retryNumber = 0;
+        while (!cancelled) {
+          const remainingSuccessSlots = Math.max(0, MAX_IMAGES_PER_TURN - imageSuccessfulCount - 1);
+          const reservedAttempts = Math.min(remainingImageCallsInRound, remainingSuccessSlots);
+          const attemptsAvailable = MAX_IMAGE_ATTEMPTS_PER_TURN - imageAttemptCount - reservedAttempts;
+          if (attemptsAvailable <= 0) {
+            imageInvocationFailed = true;
+            const prompt = typeof args.prompt === "string" ? args.prompt.trim().slice(0, 2_000) : "";
+            const operation: ImageOperation =
+              args.operation === "edit" || args.operation === "variation" || args.operation === "multi_reference"
+                ? args.operation
+                : "generate";
+            const message = prefersChinese
+              ? `本轮最多允许 ${MAX_IMAGE_ATTEMPTS_PER_TURN} 次生图尝试，失败补偿次数已经用完。`
+              : `This turn allows at most ${MAX_IMAGE_ATTEMPTS_PER_TURN} image attempts, including failure recovery.`;
+            sendImageState({
+              status: "error",
+              modelId: selectedImageModel.id,
+              modelName: selectedImageModel.name,
+              prompt,
+              message,
+              operation,
+            });
+            return JSON.stringify({ ok: false, error: message });
+          }
+
+          const result = await executeImageToolOnce(args, attemptsAvailable > 1);
+          let parsed: { ok?: unknown; retryable?: unknown } = {};
+          try {
+            parsed = JSON.parse(result) as { ok?: unknown; retryable?: unknown };
+          } catch {
+            return result;
+          }
+          if (parsed.ok === true || parsed.retryable !== true) return result;
+          retryNumber += 1;
+          await new Promise((resolve) => setTimeout(resolve, Math.min(600, 180 * retryNumber)));
+        }
+        return JSON.stringify({ ok: false, error: "Image generation was cancelled." });
       };
 
       const recordBrowserTelemetry = (
@@ -2429,6 +2499,7 @@ const handleToolChat = (
         const executeToolCall = async (
           call: NormalizedToolCall,
           successfulBeforeRound: ReadonlySet<string>,
+          remainingImageCallsInRound: number,
         ): Promise<{ result: string; success: boolean; signature: string; reused: boolean }> => {
           const signature = toolCallSignature(call);
           if (successfulBeforeRound.has(signature)) {
@@ -2443,7 +2514,7 @@ const handleToolChat = (
           send({ tool_activity: { status: "started", name: call.name } });
           let result: string;
           if (call.name === "generate_image") {
-            result = await executeImageTool(call.arguments as GenerateImageArguments);
+            result = await executeImageTool(call.arguments as GenerateImageArguments, remainingImageCallsInRound);
           } else if (call.name === "create_file") {
             result = await executeCreateFileTool(call.arguments as CreateFileArguments);
           } else if (call.name === "search_web") {
@@ -2531,9 +2602,13 @@ const handleToolChat = (
               function: { name: call.name, arguments: JSON.stringify(call.arguments) },
             })),
           });
-          for (const call of toolCalls) {
+          for (const [callIndex, call] of toolCalls.entries()) {
             if (cancelled) return;
-            const outcome = await executeToolCall(call, successfulBeforeRound);
+            const remainingImageCallsInRound = toolCalls
+              .slice(callIndex + 1)
+              .filter((candidate) => candidate.name === "generate_image")
+              .length;
+            const outcome = await executeToolCall(call, successfulBeforeRound, remainingImageCallsInRound);
             if (outcome.success) {
               successfulToolNames.add(call.name);
               if (!outcome.reused) successfulToolSignatures.add(outcome.signature);

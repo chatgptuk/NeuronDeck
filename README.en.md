@@ -37,7 +37,7 @@ NeuronDeck brings Cloudflare-hosted chat models, multimodal input, image generat
 - Browser-local IndexedDB history, mobile refinements, message timestamps, and generation duration
 - Optional public quota pool with stable distribution and automatic failover across administrator-provided Cloudflare accounts
 - Optional Cloudflare OAuth so users can authorize their own accounts and use their own Workers AI quota
-- Multi-round Function Calling: one response can invoke several tools, create up to ten images, and use Browser Run to search, read, and capture public webpages
+- Multi-round Function Calling: one response can invoke several tools, deliver up to ten successful images with three shared recovery attempts for transient failures, and use Browser Run to search, read, and capture public webpages
 - AI file creation: tool-capable models can create and send real TXT, Markdown, PDF, CSV, and JSON downloads; PDFs use a safe Markdown-to-HTML rendering path
 - A trusted server-side current time and browser time zone are added to each request, so past and future dates can be judged without web access
 - Optional model health and cost center with per-model success rate, first-token latency, total duration, tokens, tool calls, estimated chat cost, and anonymous traffic trends
@@ -109,7 +109,7 @@ An administrator can provide up to 16 Cloudflare accounts for anonymous visitors
 
    Use `wrangler.jsonc` instead when deploying the public template. Deleting this Secret disables the pool and returns anonymous traffic to the owning account's AI binding.
 
-The pool has an additional limit of 60 requests per minute in each Cloudflare location. Each visitor is limited to 10 chat requests and 6 speech-synthesis requests per minute. An invalid Secret fails closed instead of silently charging the Worker owner's account. Cloudflare limits an individual Secret/environment variable to 5 KB.
+The pool has an additional limit of 60 requests per minute in each Cloudflare location. Each visitor is limited to 10 chat requests, 15 image attempts, and 6 speech-synthesis requests per minute. A turn can return up to ten successful images and reserves three additional attempts for recoverable provider failures; invalid inputs, missing references, and content-policy rejections are not retried blindly. An invalid Secret fails closed instead of silently charging the Worker owner's account. Cloudflare limits an individual Secret/environment variable to 5 KB.
 
 Browser Run uses stateless Quick Actions. Page reads, screenshots, and PDF renders have a hard 45-second timeout, and completed or aborted calls leave no browser session, cookies, or background tabs behind. Screenshots appear as real downloadable images but do not inherit the user's local signed-in browser state. A chat turn is limited to four Browser Run actions to prevent accidental quota use.
 
