@@ -820,6 +820,10 @@ function App() {
           }
         }
 
+        if (webResearch && (webResearch.status === "searching" || webResearch.status === "reading" || webResearch.status === "capturing")) {
+          webResearch = { ...webResearch, status: "complete" };
+        }
+
         updateMessage(conversation.id, assistantId, (message) => ({
           ...message,
           content: cancelledByServer
@@ -1611,6 +1615,7 @@ function App() {
                           language={language}
                           reportTitle={activeConversation.title}
                           reportContent={message.content}
+                          settled={message.status !== "streaming"}
                         />
                         {message.reasoning && (
                           <details className="reasoning-block" open={message.status === "streaming"}>

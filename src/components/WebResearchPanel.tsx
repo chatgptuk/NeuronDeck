@@ -11,6 +11,7 @@ interface WebResearchPanelProps {
   sources?: WebSource[];
   reportTitle?: string;
   reportContent?: string;
+  settled?: boolean;
 }
 
 const formatAccessedAt = (value: string | undefined, language: Language): string | null => {
@@ -31,24 +32,29 @@ export function WebResearchPanel({
   sources = [],
   reportTitle = "NeuronDeck Research",
   reportContent = "",
+  settled = false,
 }: WebResearchPanelProps) {
   const t = translations[language];
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
-  if ((!state || state.status === "complete") && !sources.length) return null;
-  const active = state?.status === "searching" || state?.status === "reading" || state?.status === "capturing";
-  const label = state?.status === "searching"
+  const stateIsActive = state?.status === "searching" || state?.status === "reading" || state?.status === "capturing";
+  const visibleState: WebResearchState | undefined = settled && state && stateIsActive
+    ? { ...state, status: "complete" }
+    : state;
+  if ((!visibleState || visibleState.status === "complete") && !sources.length) return null;
+  const active = visibleState?.status === "searching" || visibleState?.status === "reading" || visibleState?.status === "capturing";
+  const label = visibleState?.status === "searching"
     ? language === "zh" ? "正在搜索网页" : "Searching the web"
-    : state?.status === "reading"
+    : visibleState?.status === "reading"
       ? language === "zh" ? "正在读取网页" : "Reading webpage"
-      : state?.status === "capturing"
+      : visibleState?.status === "capturing"
         ? language === "zh" ? "正在截取网页" : "Capturing webpage"
-      : state?.status === "error"
+      : visibleState?.status === "error"
         ? language === "zh" ? "网页工具暂时不可用" : "Web tool unavailable"
         : language === "zh" ? "已查阅来源" : "Sources consulted";
-  const detail = state?.query || (state?.url ? (() => {
-    try { return new URL(state.url).hostname.replace(/^www\./, ""); } catch { return state.url; }
-  })() : state?.message);
+  const detail = visibleState?.query || (visibleState?.url ? (() => {
+    try { return new URL(visibleState.url).hostname.replace(/^www\./, ""); } catch { return visibleState.url; }
+  })() : visibleState?.message);
 
   const exportPdf = async () => {
     if (!reportContent.trim() || !sources.length || exporting) return;
@@ -64,10 +70,10 @@ export function WebResearchPanel({
   };
 
   return (
-    <section className={state?.status === "error" ? "web-research error" : "web-research"} aria-live="polite">
-      {state && state.status !== "complete" ? (
+    <section className={visibleState?.status === "error" ? "web-research error" : "web-research"} aria-live="polite">
+      {visibleState && visibleState.status !== "complete" ? (
         <div className="web-research-status">
-          <span>{state.status === "searching" ? <Search size={15} /> : state.status === "capturing" ? <Camera size={15} /> : <Globe2 size={15} />}</span>
+          <span>{visibleState.status === "searching" ? <Search size={15} /> : visibleState.status === "capturing" ? <Camera size={15} /> : <Globe2 size={15} />}</span>
           <span><strong>{label}</strong>{detail ? <small>{detail}</small> : null}</span>
           {active ? <i><b /><b /><b /></i> : null}
         </div>

@@ -2144,6 +2144,13 @@ describe("Browser Run function calling", () => {
           },
         ] } }] } });
       }
+      if (modelRound === 4) {
+        return Response.json({ success: true, result: { choices: [{ message: { tool_calls: [{
+          id: "research-followup-search",
+          type: "function",
+          function: { name: "search_web", arguments: JSON.stringify({ query: "Cloudflare Workers AI citations" }) },
+        }] } }] } });
+      }
       return new Response(
         'data: {"response":"## Verified facts\\n\\nBrowser Run exposes browser APIs.[1] Workers AI runs hosted models.[2]\\n\\n## Analysis and inference\\n\\nTogether they can support a cited research workflow."}\n\ndata: [DONE]\n\n',
         { headers: { "content-type": "text/event-stream" } },
@@ -2172,8 +2179,8 @@ describe("Browser Run function calling", () => {
     } as never);
     const body = await response.text();
 
-    expect(modelRound).toBe(4);
-    expect(browserTargets).toHaveLength(3);
+    expect(modelRound).toBe(5);
+    expect(browserTargets).toHaveLength(4);
     expect(JSON.stringify(modelRequests[0])).toContain("Research mode is enabled");
     expect(JSON.stringify(modelRequests[1])).toContain("Do not answer yet");
     expect(body).not.toContain("Uncited shortcut answer");
@@ -2182,6 +2189,7 @@ describe("Browser Run function calling", () => {
     expect(body).toMatch(/"accessedAt":"\d{4}-\d{2}-\d{2}T/);
     expect(body).toContain("Browser Run exposes browser APIs.[1]");
     expect(body).toContain("Workers AI runs hosted models.[2]");
+    expect(body.lastIndexOf('"status":"complete"')).toBeGreaterThan(body.lastIndexOf('"status":"searching"'));
   });
 
   it("exports a cited research response as a direct PDF using the public Browser Run account", async () => {

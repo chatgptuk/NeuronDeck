@@ -2817,8 +2817,15 @@ const handleToolChat = (
           }
         }
 
-        if (browserInvocationCount > 0 && !browserInvocationFailed && !webSources.length) {
-          send({ web_research: { status: "complete" } });
+        if (browserInvocationCount > 0) {
+          send({
+            web_research: webSources.length > 0 || !browserInvocationFailed
+              ? { status: "complete" }
+              : {
+                  status: "error",
+                  message: "One or more Browser Run actions failed before any source could be opened.",
+                },
+          });
         }
         if (!cancelled && !finished) {
           try {
