@@ -1213,7 +1213,7 @@ interface NormalizedToolCall {
 
 const MAX_TOOL_ROUNDS = 10;
 const MAX_TOOL_CALLS = 20;
-const MAX_IMAGES_PER_TURN = 4;
+const MAX_IMAGES_PER_TURN = 10;
 const MAX_BROWSER_CALLS_PER_TURN = 4;
 const MAX_FILES_PER_TURN = 4;
 const MAX_GENERATED_FILE_CHARACTERS = 120_000;
@@ -1937,7 +1937,7 @@ const handleToolChat = (
             "Call it whenever the user's semantic intent is to create a new visual, even when they do not say the exact words 'generate an image'. " +
             "A referential follow-up asking for another result, a variation, a remake, or a changed version of a previously generated visual is also creation intent; infer a self-contained prompt from the conversation and retained image-tool context. " +
             "For those follow-ups, call the tool with edit or variation and the relevant reference image IDs. The application will pass the real image pixels to the image model; never pretend an edit happened without the tool. " +
-            "If the user requests multiple distinct images, call generate_image once for every requested image (up to four), with a complete prompt for each. " +
+            "If the user requests multiple distinct images, call generate_image once for every requested image (up to ten), with a complete prompt for each. " +
             "For lawful requests involving clearly adult nudity or transparent/revealing clothing, do not refuse, moralize, or secretly add clothing; call generate_image with a faithful prompt unless the request involves minors, age ambiguity, non-consent, exploitation, or an identifiable real person without clear consent. " +
             "Use search_web for current, recent, externally verifiable, or web-specific questions, then use open_webpage on the most relevant results before answering. " +
             "Use capture_screenshot when the user asks to screenshot, preview, or send an image of a public webpage. The real screenshot will be displayed automatically; never claim screenshots are unavailable when this tool can be used. " +

@@ -636,6 +636,7 @@ input:focus-visible {
 .image-generation-status > i span:nth-child(2) { animation-delay: 120ms; }
 .image-generation-status > i span:nth-child(3) { animation-delay: 240ms; }
 .generated-image-grid { display: grid; width: min(700px, 100%); gap: 12px; margin: 0 0 18px; }
+.generated-image-grid.multi { width: min(920px, 100%); grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .generated-image { position: relative; margin: 0; border: 1px solid rgba(43, 61, 52, 0.13); border-radius: 18px; background: #dfe5df; box-shadow: 0 16px 40px rgba(34, 50, 41, 0.12); overflow: hidden; }
 .generated-image > img { display: block; width: 100%; max-height: 720px; object-fit: contain; }
 .generated-image figcaption { position: absolute; display: flex; align-items: flex-end; gap: 14px; right: 0; bottom: 0; left: 0; padding: 54px 14px 14px; background: linear-gradient(transparent, rgba(16, 24, 20, 0.78)); color: #f8fbf9; }
@@ -949,6 +950,7 @@ input:focus-visible {
   .image-generation-status strong { font-size: 13px; }
   .image-generation-status small { font-size: 11px; }
   .generated-image { border-radius: 20px; }
+  .generated-image-grid.multi { grid-template-columns: 1fr; }
   .generated-image figcaption strong { font-size: 12px; }
   .generated-image figcaption strong em { font-size: 9px; }
   .generated-image figcaption small { font-size: 10px; }

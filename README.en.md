@@ -37,7 +37,7 @@ NeuronDeck brings Cloudflare-hosted chat models, multimodal input, image generat
 - Browser-local IndexedDB history, mobile refinements, message timestamps, and generation duration
 - Optional public quota pool with stable distribution and automatic failover across administrator-provided Cloudflare accounts
 - Optional Cloudflare OAuth so users can authorize their own accounts and use their own Workers AI quota
-- Multi-round Function Calling: one response can invoke several tools, create up to four images, and use Browser Run to search, read, and capture public webpages
+- Multi-round Function Calling: one response can invoke several tools, create up to ten images, and use Browser Run to search, read, and capture public webpages
 - AI file creation: tool-capable models can create and send real TXT, Markdown, PDF, CSV, and JSON downloads; PDFs use a safe Markdown-to-HTML rendering path
 - A trusted server-side current time and browser time zone are added to each request, so past and future dates can be judged without web access
 - Optional model health and cost center with per-model success rate, first-token latency, total duration, tokens, tool calls, estimated chat cost, and anonymous traffic trends

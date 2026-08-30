@@ -920,6 +920,64 @@ describe("image generation function calling", () => {
     expect(body).toContain("两张图片都生成好了");
   });
 
+  it("generates at most ten images in one turn even when the model requests more", async () => {
+    const chatInputs: Array<Record<string, unknown>> = [];
+    let imageCalls = 0;
+    let chatRound = 0;
+    const ai = {
+      run: vi.fn(async (model: string, input: Record<string, unknown>) => {
+        if (model === imageModel) {
+          imageCalls += 1;
+          return { image: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB" };
+        }
+        chatInputs.push(input);
+        chatRound += 1;
+        if (chatRound === 1) {
+          return {
+            choices: [{ message: { tool_calls: Array.from({ length: 11 }, (_, index) => ({
+              id: `image-${index + 1}`,
+              type: "function",
+              function: {
+                name: "generate_image",
+                arguments: JSON.stringify({
+                  prompt: `A distinct abstract composition numbered ${index + 1}`,
+                  operation: "generate",
+                }),
+              },
+            })) } }],
+          };
+        }
+        return { response: "十张图片已经生成。" };
+      }),
+      toMarkdown: vi.fn(),
+    };
+    const response = await worker.fetch(new Request("https://ai.chatgpt.org.uk/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "accept-language": "zh-CN",
+        "x-neurondeck-client": "ten-image-test-client",
+      },
+      body: JSON.stringify({
+        model: chatModel,
+        imageModel,
+        messages: [{ role: "user", content: "生成十一张不同的抽象图片" }],
+      }),
+    }), {
+      AI: ai,
+      ASSETS: { fetch: vi.fn() },
+      CHAT_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+    } as never);
+    const body = await response.text();
+    const finalMessages = chatInputs[1].messages as Array<{ role?: string; content?: string }>;
+
+    expect(imageCalls).toBe(10);
+    expect((body.match(/"generated_image"/g) ?? [])).toHaveLength(10);
+    expect(finalMessages.filter((message) => message.role === "tool")).toHaveLength(11);
+    expect(finalMessages.some((message) => message.role === "tool" && message.content?.includes("At most 10 images"))).toBe(true);
+    expect(body).toContain("十张图片已经生成");
+  });
+
   it("reuses identical successful calls from earlier rounds without collapsing same-round requests", async () => {
     const chatInputs: Array<Record<string, unknown>> = [];
     let imageCalls = 0;

@@ -38,7 +38,7 @@ export function GeneratedImageGallery({ images = [], state, language }: Generate
         </div>
       ) : null}
       {images.length ? (
-        <div className="generated-image-grid">
+        <div className={`generated-image-grid${images.length > 1 ? " multi" : ""}`}>
           {images.map((image, index) => (
             <figure className="generated-image" key={image.id}>
               <img src={image.dataUrl} alt={image.prompt} />
