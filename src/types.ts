@@ -76,6 +76,19 @@ export interface BrowserScreenshot {
   elapsedMs?: number;
 }
 
+export type GeneratedFileFormat = "txt" | "md" | "pdf" | "csv" | "json";
+
+export interface GeneratedFile {
+  id: string;
+  fileName: string;
+  format: GeneratedFileFormat;
+  mimeType: string;
+  size: number;
+  downloadUrl: string;
+  elapsedMs?: number;
+  expiresAt?: string;
+}
+
 export interface WebResearchState {
   status: "searching" | "reading" | "capturing" | "complete" | "error";
   query?: string;
@@ -99,6 +112,7 @@ export interface ChatMessage {
   webResearch?: WebResearchState;
   webSources?: WebSource[];
   browserScreenshots?: BrowserScreenshot[];
+  generatedFiles?: GeneratedFile[];
   generationSessionId?: string;
   streamCursor?: number;
   recoveryState?: "connecting" | "recovering";
@@ -134,6 +148,7 @@ export interface StreamEvent {
   imageGeneration?: ImageGenerationState;
   webResearch?: WebResearchState;
   browserScreenshot?: BrowserScreenshot;
+  generatedFile?: GeneratedFile;
   cursor?: number;
   cancelled?: boolean;
 }

@@ -1,4 +1,4 @@
-import type { BrowserScreenshot, GeneratedImage, ImageGenerationState, StreamEvent, WebResearchState } from "../types";
+import type { BrowserScreenshot, GeneratedFile, GeneratedImage, ImageGenerationState, StreamEvent, WebResearchState } from "../types";
 
 export class StreamInterruptedError extends Error {
   constructor() {
@@ -23,6 +23,9 @@ const getNestedContent = (value: unknown): StreamEvent => {
   }
   if (data.browser_screenshot && typeof data.browser_screenshot === "object") {
     return { browserScreenshot: data.browser_screenshot as BrowserScreenshot };
+  }
+  if (data.generated_file && typeof data.generated_file === "object") {
+    return { generatedFile: data.generated_file as GeneratedFile };
   }
   if (typeof data.response === "string") return { content: data.response };
   if (typeof data.content === "string") return { content: data.content };

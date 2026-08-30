@@ -37,6 +37,18 @@ describe("Workers AI stream parser", () => {
       });
   });
 
+  it("parses generated downloadable files", () => {
+    expect(parseSseData('{"generated_file":{"id":"file-1","fileName":"report.pdf","format":"pdf","mimeType":"application/pdf","size":1024,"downloadUrl":"/api/generated-files/file-1?token=x"}}'))
+      .toEqual({ generatedFile: {
+        id: "file-1",
+        fileName: "report.pdf",
+        format: "pdf",
+        mimeType: "application/pdf",
+        size: 1024,
+        downloadUrl: "/api/generated-files/file-1?token=x",
+      } });
+  });
+
   it("rejects streams that close without a completion marker", async () => {
     const response = new Response('data: {"response":"partial"}\n\n');
     await expect(consumeChatStream(response, () => undefined)).rejects.toBeInstanceOf(StreamInterruptedError);

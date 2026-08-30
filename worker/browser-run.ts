@@ -5,12 +5,14 @@ import {
 
 export const BROWSER_RUN_MODEL_ID = "browser-run/markdown";
 export const BROWSER_SCREENSHOT_MODEL_ID = "browser-run/screenshot";
+export const BROWSER_PDF_MODEL_ID = "browser-run/pdf";
 export const MAX_WEB_CONTENT_CHARACTERS = 16_000;
 
 const BROWSER_REQUEST_TIMEOUT_MS = 45_000;
 const QUICK_ACTION_TIMEOUT_MS = 25_000;
 const MAX_SEARCH_RESULTS = 5;
 const MAX_SCREENSHOT_BYTES = 4 * 1024 * 1024;
+const MAX_PDF_BYTES = 4 * 1024 * 1024;
 const ALLOWED_PORTS = new Set(["", "80", "443"]);
 
 export interface WebSource {
@@ -46,6 +48,13 @@ export interface BrowserScreenshotResult {
 export interface BrowserScreenshotOptions {
   fullPage: boolean;
   viewport: "desktop" | "mobile";
+}
+
+export interface BrowserPdfResult {
+  bytes: Uint8Array;
+  elapsedMs: number;
+  browserMs: number;
+  accountId: string;
 }
 
 export class BrowserRunError extends Error {
@@ -275,6 +284,97 @@ export const runBrowserScreenshotWithPool = async (
       lastError = error instanceof BrowserRunError
         ? error
         : new BrowserRunError("Browser Run could not capture the webpage.", "unavailable", true);
+      if (!lastError.retryable && lastError.code !== "permission") throw lastError;
+    }
+  }
+  throw lastError ?? new BrowserRunError("No public Browser Run account is configured.", "unavailable");
+};
+
+const pdfBytesFromPayload = (value: unknown): Uint8Array => {
+  const pdf = typeof value === "string"
+    ? value
+    : value && typeof value === "object" && typeof (value as { pdf?: unknown }).pdf === "string"
+      ? (value as { pdf: string }).pdf
+      : "";
+  return base64ToBytes(pdf.replace(/^data:application\/pdf;base64,/i, ""));
+};
+
+export const runBrowserPdf = async (
+  credential: PublicAiAccountCredential,
+  html: string,
+  externalSignal?: AbortSignal,
+): Promise<BrowserPdfResult> => {
+  const startedAt = Date.now();
+  const abortController = new AbortController();
+  const abortFromCaller = () => abortController.abort();
+  if (externalSignal?.aborted) abortController.abort();
+  else externalSignal?.addEventListener("abort", abortFromCaller, { once: true });
+  const timeout = setTimeout(() => abortController.abort(), BROWSER_REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${credential.accountId}/browser-rendering/pdf`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${credential.apiToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          html,
+          pdfOptions: {
+            format: "a4",
+            printBackground: true,
+            preferCSSPageSize: true,
+            margin: { top: "18mm", right: "17mm", bottom: "18mm", left: "17mm" },
+          },
+          actionTimeout: QUICK_ACTION_TIMEOUT_MS,
+          bestAttempt: true,
+          rejectResourceTypes: ["image", "media", "font", "stylesheet", "script", "xhr", "fetch", "websocket"],
+        }),
+        signal: abortController.signal,
+      },
+    );
+    if (!response.ok) throw await browserErrorForResponse(response);
+    const contentType = response.headers.get("content-type")?.split(";")[0].toLowerCase() ?? "";
+    const bytes = contentType === "application/pdf"
+      ? new Uint8Array(await response.arrayBuffer())
+      : pdfBytesFromPayload((await response.json() as { result?: unknown }).result);
+    if (bytes.length < 5 || String.fromCharCode(...bytes.subarray(0, 5)) !== "%PDF-" || bytes.length > MAX_PDF_BYTES) {
+      throw new BrowserRunError("The generated PDF was empty, invalid, or too large.", "unavailable");
+    }
+    return {
+      bytes,
+      elapsedMs: Math.max(1, Date.now() - startedAt),
+      browserMs: Math.max(0, Number(response.headers.get("x-browser-ms-used")) || 0),
+      accountId: credential.accountId,
+    };
+  } catch (error) {
+    if (error instanceof BrowserRunError) throw error;
+    if (abortController.signal.aborted) {
+      throw new BrowserRunError("Browser Run timed out and released the PDF request.", "timeout", true);
+    }
+    throw new BrowserRunError("Browser Run could not create the PDF.", "unavailable", true);
+  } finally {
+    clearTimeout(timeout);
+    externalSignal?.removeEventListener("abort", abortFromCaller);
+  }
+};
+
+export const runBrowserPdfWithPool = async (
+  accounts: readonly PublicAiAccountCredential[],
+  seed: string,
+  html: string,
+  signal?: AbortSignal,
+): Promise<BrowserPdfResult> => {
+  const ordered = orderPublicAiAccounts(accounts, seed);
+  let lastError: BrowserRunError | undefined;
+  for (const account of ordered) {
+    try {
+      return await runBrowserPdf(account, html, signal);
+    } catch (error) {
+      lastError = error instanceof BrowserRunError
+        ? error
+        : new BrowserRunError("Browser Run could not create the PDF.", "unavailable", true);
       if (!lastError.retryable && lastError.code !== "permission") throw lastError;
     }
   }

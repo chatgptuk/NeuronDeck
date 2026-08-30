@@ -106,10 +106,11 @@ import {
   selectCloudflareAccount,
   type CloudflareAuthStatus,
 } from "./lib/cloudflare-auth";
-import type { Attachment, BrowserScreenshot, ChatMessage, Conversation, GeneratedImage, ModelInfo, WebResearchState, WebSource, WorkspaceState } from "./types";
+import type { Attachment, BrowserScreenshot, ChatMessage, Conversation, GeneratedFile, GeneratedImage, ModelInfo, WebResearchState, WebSource, WorkspaceState } from "./types";
 import { AttachmentStrip } from "./components/AttachmentStrip";
 import { GeneratedImageGallery } from "./components/GeneratedImageGallery";
 import { BrowserScreenshotGallery } from "./components/BrowserScreenshotGallery";
+import { GeneratedFileGallery } from "./components/GeneratedFileGallery";
 import { WebResearchPanel } from "./components/WebResearchPanel";
 import { ModelPicker } from "./components/ModelPicker";
 import {
@@ -637,6 +638,7 @@ function App() {
       let reasoning = resumedMessage?.reasoning ?? "";
       let generatedImages: GeneratedImage[] = resumedMessage?.generatedImages ?? [];
       let browserScreenshots: BrowserScreenshot[] = resumedMessage?.browserScreenshots ?? [];
+      let generatedFiles: GeneratedFile[] = resumedMessage?.generatedFiles ?? [];
       let webResearch: WebResearchState | undefined = resumedMessage?.webResearch;
       let webSources: WebSource[] = resumedMessage?.webSources ?? [];
       let pendingImageJobId = resumedMessage?.imageGeneration?.status === "generating"
@@ -758,13 +760,17 @@ function App() {
               if (event.browserScreenshot && !browserScreenshots.some((item) => item.id === event.browserScreenshot!.id)) {
                 browserScreenshots = [...browserScreenshots, event.browserScreenshot];
               }
-              if (event.content || event.reasoning || event.generatedImage || event.imageGeneration || event.webResearch || event.browserScreenshot || event.cursor != null) {
+              if (event.generatedFile && !generatedFiles.some((item) => item.id === event.generatedFile!.id)) {
+                generatedFiles = [...generatedFiles, event.generatedFile];
+              }
+              if (event.content || event.reasoning || event.generatedImage || event.imageGeneration || event.webResearch || event.browserScreenshot || event.generatedFile || event.cursor != null) {
                 updateMessage(conversation.id, assistantId, (message) => ({
                   ...message,
                   content,
                   reasoning,
                   generatedImages,
                   browserScreenshots,
+                  generatedFiles,
                   webResearch,
                   webSources,
                   imageGeneration: event.imageGeneration ??
@@ -818,10 +824,13 @@ function App() {
               ? t.imageGeneratedFallback
               : browserScreenshots.length
                 ? t.screenshotCapturedFallback
-                : t.emptyCompletion),
+                : generatedFiles.length
+                  ? t.fileGeneratedFallback
+                  : t.emptyCompletion),
           reasoning,
           generatedImages,
           browserScreenshots,
+          generatedFiles,
           webResearch,
           webSources,
           status: "complete",
@@ -853,6 +862,7 @@ function App() {
           reasoning,
           generatedImages,
           browserScreenshots,
+          generatedFiles,
           webResearch,
           webSources,
           status: stopped ? "complete" : "error",
@@ -872,6 +882,7 @@ function App() {
       t.generationFailed,
       t.generationStopped,
       t.imageGeneratedFallback,
+      t.fileGeneratedFallback,
       t.requestFailed,
       t.screenshotCapturedFallback,
       updateMessage,
@@ -1344,6 +1355,12 @@ function App() {
               "",
             ])
           : []),
+        ...(message.generatedFiles?.length
+          ? message.generatedFiles.flatMap((file) => [
+              `${file.fileName} · ${file.format.toUpperCase()} · ${file.downloadUrl}`,
+              "",
+            ])
+          : []),
         message.content,
         "",
       ]),
@@ -1564,6 +1581,7 @@ function App() {
                           screenshots={message.browserScreenshots}
                           language={language}
                         />
+                        <GeneratedFileGallery files={message.generatedFiles} language={language} />
                         <WebResearchPanel
                           state={message.webResearch}
                           sources={message.webSources}
@@ -1583,7 +1601,7 @@ function App() {
                           <Suspense fallback={<p>{message.content}</p>}>
                             <MarkdownMessage content={message.content} language={language} />
                           </Suspense>
-                        ) : message.imageGeneration || message.generatedImages?.length || message.browserScreenshots?.length || message.webResearch ? null : (
+                        ) : message.imageGeneration || message.generatedImages?.length || message.browserScreenshots?.length || message.generatedFiles?.length || message.webResearch ? null : (
                           <div className="typing"><span /><span /><span /></div>
                         )}
                       </div>

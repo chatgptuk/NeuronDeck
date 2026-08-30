@@ -38,6 +38,7 @@ NeuronDeck brings Cloudflare-hosted chat models, multimodal input, image generat
 - Optional public quota pool with stable distribution and automatic failover across administrator-provided Cloudflare accounts
 - Optional Cloudflare OAuth so users can authorize their own accounts and use their own Workers AI quota
 - Multi-round Function Calling: one response can invoke several tools, create up to four images, and use Browser Run to search, read, and capture public webpages
+- AI file creation: tool-capable models can create and send real TXT, Markdown, PDF, CSV, and JSON downloads; PDFs use a safe Markdown-to-HTML rendering path
 - A trusted server-side current time and browser time zone are added to each request, so past and future dates can be judged without web access
 - Optional model health and cost center with per-model success rate, first-token latency, total duration, tokens, tool calls, estimated chat cost, and anonymous traffic trends
 - Installable PWA with Service Worker completion alerts for chat and image generations that finish while the page is in the background
@@ -47,7 +48,7 @@ NeuronDeck brings Cloudflare-hosted chat models, multimodal input, image generat
 
 Select **Deploy to Cloudflare** above, then sign in to Cloudflare and GitHub to create your own repository and Worker. Cloudflare reads the portable `wrangler.jsonc` and configures Workers AI, Durable Objects, and KV for the new deployment. The application is published to the deployer's own `workers.dev` address; it does not bind `ai.chatgpt.org.uk` or connect to this project's production resources.
 
-The default deployment **does not require an R2 subscription**. Chat and image generation continue inside an independent Durable Object session, and the browser can recover missed events by cursor after a refresh, backgrounding, or a temporary network loss. Active generation events are retained for up to 24 hours; long-term conversation history still stays in the browser. With optional R2 and Workflows, FLUX.2 Dev uses a more durable channel for slow jobs and automatically falls back to direct session delivery if persistence is unavailable.
+The default deployment **does not require an R2 subscription**. Chat, image generation, and file tools continue inside an independent Durable Object session, and the browser can recover missed events by cursor after a refresh, backgrounding, or a temporary network loss. A Durable Object stores only temporary stream events, recovery cursors, and session state; its Alarm calls `deleteAll()` 24 hours after creation. Long-term conversation history still stays in the browser. With optional R2 and Workflows, FLUX.2 Dev uses a more durable channel and generated files receive temporary download URLs; unavailable persistence automatically falls back to direct session delivery.
 
 By default, the deployed Worker consumes Workers AI quota from the **Cloudflare account that owns the Worker**. User-facing Cloudflare OAuth is not enabled automatically because every deployment needs its own OAuth client, callback domain, and session secret.
 
@@ -73,7 +74,7 @@ To add independent Workflow retries and R2 result persistence for slow FLUX.2 De
 ]
 ```
 
-Both bindings must be present. Once enabled, FLUX.2 Dev runs as a Workflow and stores its result temporarily in R2, while faster image models continue to return directly. If an R2 write fails, NeuronDeck stops pointless Workflow retries, generates the image once more, and returns it directly to the browser.
+Both bindings must be present. Once enabled, FLUX.2 Dev runs as a Workflow and stores its result temporarily in R2, while faster image models continue to return directly. Final images, temporary references, and AI-generated files in R2 all expire after 24 hours. The Worker scans every six hours to remove expired objects and also rejects and deletes expired downloads on access. This cleanup also covers older image objects created before expiry metadata existed. If an R2 write fails, NeuronDeck stops pointless Workflow retries and falls back to direct browser delivery.
 
 Cloudflare documentation: [Enable R2](https://developers.cloudflare.com/r2/get-started/) · [Workflows configuration](https://developers.cloudflare.com/workers/wrangler/configuration/#workflows)
 
@@ -81,7 +82,7 @@ Cloudflare documentation: [Enable R2](https://developers.cloudflare.com/r2/get-s
 
 An administrator can provide up to 16 Cloudflare accounts for anonymous visitors. Chat, file conversion, Function Calling, speech synthesis, and background image jobs all use the same pool. A browser is assigned a stable starting entry, and the Worker automatically fails over when an account returns an authorization, quota, capacity, or server error. Connected users use their own quota for Workers AI requests; Browser Run search, webpage reading, and screenshots always use this site pool instead of the Worker's deployment account.
 
-1. In each Cloudflare account, open Workers AI and select **Use REST API → Create a Workers AI API Token**. For a custom token, grant `Workers AI Read`, `Workers AI Edit`, and the account-level `Browser Rendering Edit` permission for search, webpage reading, and screenshots. Never use a Global API Key. Without the Browser permission, chat and image generation continue to work, but web tools return a permission notice.
+1. In each Cloudflare account, open Workers AI and select **Use REST API → Create a Workers AI API Token**. For a custom token, grant `Workers AI Read`, `Workers AI Edit`, and the account-level `Browser Rendering Edit` permission for search, webpage reading, screenshots, and PDF files. Never use a Global API Key. Without the Browser permission, chat and ordinary text files continue to work, but web tools and PDF rendering return a permission notice.
 
 2. Store the following JSON as a Worker Secret named `PUBLIC_AI_ACCOUNTS`. Never put real tokens in Wrangler configuration, `.env`, README, or Git:
 
@@ -110,7 +111,7 @@ An administrator can provide up to 16 Cloudflare accounts for anonymous visitors
 
 The pool has an additional limit of 60 requests per minute in each Cloudflare location. Each visitor is limited to 10 chat requests and 6 speech-synthesis requests per minute. An invalid Secret fails closed instead of silently charging the Worker owner's account. Cloudflare limits an individual Secret/environment variable to 5 KB.
 
-Browser Run uses stateless Quick Actions. Page reads and screenshots have a hard 45-second timeout, and completed or aborted calls leave no browser session, cookies, or background tabs behind. Screenshots appear as real downloadable images but do not inherit the user's local signed-in browser state. A chat turn is limited to four Browser Run actions to prevent accidental quota use.
+Browser Run uses stateless Quick Actions. Page reads, screenshots, and PDF renders have a hard 45-second timeout, and completed or aborted calls leave no browser session, cookies, or background tabs behind. Screenshots appear as real downloadable images but do not inherit the user's local signed-in browser state. A chat turn is limited to four Browser Run actions to prevent accidental quota use.
 
 Cloudflare documentation: [Workers AI REST API](https://developers.cloudflare.com/workers-ai/get-started/rest-api/) · [Browser Run Quick Actions](https://developers.cloudflare.com/browser-run/quick-actions/) · [Worker Secrets](https://developers.cloudflare.com/workers/configuration/secrets/) · [Worker environment variable limits](https://developers.cloudflare.com/workers/platform/limits/#environment-variables)
 

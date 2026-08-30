@@ -3,6 +3,7 @@ import {
   BrowserRunError,
   parseDuckDuckGoResults,
   runBrowserMarkdown,
+  runBrowserPdf,
   runBrowserScreenshot,
   validatePublicWebUrl,
 } from "./browser-run";
@@ -88,6 +89,31 @@ describe("Browser Run public-web client", () => {
       accountId: credential.accountId,
     });
     expect(result.bytes).toEqual(png);
+  });
+
+  it("renders isolated HTML to a bounded A4 PDF", async () => {
+    const credential = { accountId: "c".repeat(32), apiToken: "pdf-token-value-1234567890" };
+    const pdf = new TextEncoder().encode("%PDF-1.7\nmock");
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(pdf, {
+      headers: { "content-type": "application/pdf", "x-browser-ms-used": "222" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await runBrowserPdf(credential, "<!doctype html><p>你好</p>");
+    const [requestUrl, init] = fetchMock.mock.calls[0];
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+
+    expect(String(requestUrl)).toContain(`/accounts/${credential.accountId}/browser-rendering/pdf`);
+    expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${credential.apiToken}`);
+    expect(body).toMatchObject({
+      html: "<!doctype html><p>你好</p>",
+      pdfOptions: { format: "a4", printBackground: true, preferCSSPageSize: true },
+      actionTimeout: 25_000,
+      bestAttempt: true,
+    });
+    expect(body.rejectResourceTypes).toContain("script");
+    expect(result).toMatchObject({ browserMs: 222, accountId: credential.accountId });
+    expect(Array.from(result.bytes)).toEqual(Array.from(pdf));
   });
 
   it("extracts real result links and unwraps DuckDuckGo redirects", () => {

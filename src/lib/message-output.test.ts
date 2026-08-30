@@ -38,5 +38,16 @@ describe("message output visibility", () => {
         viewport: "desktop",
       }],
     })).toBe(true);
+    expect(hasRenderableMessageOutput({
+      content: "",
+      generatedFiles: [{
+        id: "file-1",
+        fileName: "notes.md",
+        format: "md",
+        mimeType: "text/markdown; charset=utf-8",
+        size: 42,
+        downloadUrl: "data:text/markdown;base64,IyBOb3Rlcw==",
+      }],
+    })).toBe(true);
   });
 });

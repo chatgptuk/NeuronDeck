@@ -174,7 +174,7 @@ export const recordModelTelemetry = async (
   telemetry: ModelTelemetry,
 ): Promise<void> => {
   const database = env.METRICS_DB;
-  if (!database || (!/^@cf\/[a-z0-9._/-]{3,180}$/i.test(telemetry.modelId) && !/^browser-run\/(?:markdown|screenshot)$/.test(telemetry.modelId))) return;
+  if (!database || (!/^@cf\/[a-z0-9._/-]{3,180}$/i.test(telemetry.modelId) && !/^browser-run\/(?:markdown|screenshot|pdf)$/.test(telemetry.modelId))) return;
 
   try {
     await ensureSchema(database);

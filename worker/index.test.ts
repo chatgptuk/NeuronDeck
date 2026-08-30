@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import worker, { ChatSession } from "./index";
+import worker, {
+  ChatSession,
+  cleanupExpiredTemporaryResults,
+  TEMPORARY_RESULT_RETENTION_MS,
+} from "./index";
 import {
   hasAdminAccount,
   normalizeTokenUsage,
@@ -369,6 +373,39 @@ describe("resumable chat session routing", () => {
     expect(replayBody).not.toContain('"first"');
     expect(replayBody).toContain('id: 2\ndata: {"response":" second"}');
     expect(replayBody).toContain("id: 3\ndata: [DONE]");
+
+    await session.alarm();
+    expect(storage.deleteAll).toHaveBeenCalledOnce();
+    expect(records.size).toBe(0);
+  });
+});
+
+describe("temporary Cloudflare storage cleanup", () => {
+  it("deletes expired R2 images and generated files while keeping fresh results", async () => {
+    const now = Date.parse("2026-08-30T12:00:00.000Z");
+    const oldUploaded = new Date(now - TEMPORARY_RESULT_RETENTION_MS - 1);
+    const freshUploaded = new Date(now - 60_000);
+    const objects = [
+      { key: "image-jobs/old-image", uploaded: oldUploaded, customMetadata: {} },
+      { key: "image-jobs/fresh-image", uploaded: freshUploaded, customMetadata: {} },
+      { key: "generated-files/expired-file", uploaded: freshUploaded, customMetadata: { expiresAt: String(now - 1) } },
+      { key: "generated-files/fresh-file", uploaded: oldUploaded, customMetadata: { expiresAt: String(now + 60_000) } },
+    ];
+    const deleted: string[] = [];
+    const bucket = {
+      list: vi.fn(async ({ prefix }: { prefix?: string }) => ({
+        objects: objects.filter((object) => object.key.startsWith(prefix ?? "")),
+        delimitedPrefixes: [],
+        truncated: false,
+      })),
+      delete: vi.fn(async (keys: string | string[]) => {
+        deleted.push(...(Array.isArray(keys) ? keys : [keys]));
+      }),
+    };
+
+    await expect(cleanupExpiredTemporaryResults(bucket as never, now)).resolves.toBe(2);
+    expect(deleted.sort()).toEqual(["generated-files/expired-file", "image-jobs/old-image"]);
+    expect(bucket.list).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -1839,6 +1876,179 @@ describe("Browser Run function calling", () => {
     expect(body).toContain("data:image/png;base64,");
     expect(body).toContain("网页截图已经显示在消息中");
     expect(body).not.toContain(publicAccount.apiToken);
+  });
+});
+
+describe("AI file function calling", () => {
+  it("creates a real Markdown download in R2 and returns a recoverable file event", async () => {
+    const publicAccount = publicPoolAccounts[0];
+    const modelRequests: Array<Record<string, unknown>> = [];
+    let modelRound = 0;
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      modelRequests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      modelRound += 1;
+      if (modelRound === 1) {
+        return Response.json({ success: true, result: { choices: [{ message: { tool_calls: [{
+          id: "file-call",
+          type: "function",
+          function: {
+            name: "create_file",
+            arguments: JSON.stringify({
+              file_name: "reports/产品计划",
+              format: "md",
+              title: "产品计划",
+              content: "# 产品计划\n\n这是正文。",
+            }),
+          },
+        }] } }] } });
+      }
+      return new Response(
+        'data: {"response":"文件已经生成。"}\n\ndata: [DONE]\n\n',
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const put = vi.fn(async (
+      _key: string,
+      _value: Uint8Array,
+      _options?: Record<string, unknown>,
+    ) => ({}));
+    const { env, run } = createEnv();
+    const response = await worker.fetch(new Request("https://ai.chatgpt.org.uk/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "accept-language": "zh-CN",
+        "x-neurondeck-client": "generated-file-client",
+      },
+      body: JSON.stringify({
+        model: chatModel,
+        messages: [{ role: "user", content: "把产品计划整理成 Markdown 文件发给我" }],
+      }),
+    }), {
+      ...env,
+      IMAGE_RESULTS: { put },
+      PUBLIC_AI_ACCOUNTS: JSON.stringify({ accounts: [publicAccount] }),
+      PUBLIC_AI_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+    } as never);
+    const body = await response.text();
+
+    expect(run).not.toHaveBeenCalled();
+    expect(modelRound).toBe(2);
+    expect(put).toHaveBeenCalledOnce();
+    const [objectKey, storedBytes, options] = put.mock.calls[0];
+    expect(String(objectKey)).toMatch(/^generated-files\/[0-9a-f-]{36}$/);
+    expect(new TextDecoder().decode(storedBytes as Uint8Array)).toBe("# 产品计划\n\n这是正文。");
+    expect(options).toMatchObject({
+      httpMetadata: { contentType: "text/markdown; charset=utf-8" },
+      customMetadata: { clientId: "generated-file-client", fileName: "产品计划.md" },
+    });
+    expect(Number((options as { customMetadata: { expiresAt: string } }).customMetadata.expiresAt)).toBeGreaterThan(Date.now());
+    expect(JSON.stringify(modelRequests[1])).toContain("real downloadable file is already visible");
+    expect(body).toContain('"generated_file"');
+    expect(body).toContain('"fileName":"产品计划.md"');
+    expect(body).toContain("/api/generated-files/");
+    expect(body).not.toContain(publicAccount.apiToken);
+  });
+
+  it("safely renders PDF Markdown through Browser Run before storing the result", async () => {
+    const publicAccount = publicPoolAccounts[0];
+    const pdf = new TextEncoder().encode("%PDF-1.7\nmock-pdf");
+    let modelRound = 0;
+    let pdfRequest: Record<string, unknown> | undefined;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/browser-rendering/pdf")) {
+        pdfRequest = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return new Response(pdf, { headers: { "content-type": "application/pdf" } });
+      }
+      modelRound += 1;
+      if (modelRound === 1) {
+        return Response.json({ success: true, result: { choices: [{ message: { tool_calls: [{
+          id: "pdf-call",
+          type: "function",
+          function: {
+            name: "create_file",
+            arguments: JSON.stringify({
+              file_name: "安全报告.pdf",
+              format: "pdf",
+              title: "安全报告",
+              content: "# 安全报告\n\n<script>alert('no')</script>\n\n| 项目 | 状态 |\n| --- | --- |\n| 测试 | 通过 |",
+            }),
+          },
+        }] } }] } });
+      }
+      return new Response('data: {"response":"PDF 已生成。"}\n\ndata: [DONE]\n\n', {
+        headers: { "content-type": "text/event-stream" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const put = vi.fn(async (
+      _key: string,
+      _value: Uint8Array,
+      _options?: Record<string, unknown>,
+    ) => ({}));
+    const { env } = createEnv();
+    const response = await worker.fetch(new Request("https://ai.chatgpt.org.uk/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "accept-language": "zh-CN",
+        "x-neurondeck-client": "generated-pdf-client",
+      },
+      body: JSON.stringify({
+        model: chatModel,
+        messages: [{ role: "user", content: "生成一份 PDF 安全报告发给我" }],
+      }),
+    }), {
+      ...env,
+      IMAGE_RESULTS: { put },
+      PUBLIC_AI_ACCOUNTS: JSON.stringify({ accounts: [publicAccount] }),
+      PUBLIC_AI_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+    } as never);
+    const body = await response.text();
+
+    expect(pdfRequest?.html).not.toContain("<script>alert");
+    expect(pdfRequest?.html).not.toContain("alert('no')");
+    expect(pdfRequest?.html).toContain("<table>");
+    expect(pdfRequest?.rejectResourceTypes).toContain("script");
+    expect(put).toHaveBeenCalledOnce();
+    expect(new TextDecoder().decode(put.mock.calls[0][1])).toBe("%PDF-1.7\nmock-pdf");
+    expect(body).toContain('"format":"pdf"');
+    expect(body).toContain("PDF 已生成");
+  });
+
+  it("serves stored files only with the unguessable token and safe download headers", async () => {
+    const fileId = "11111111-2222-4333-8444-555555555555";
+    const token = "a".repeat(32);
+    const bytes = new TextEncoder().encode("# 报告");
+    const get = vi.fn(async () => ({
+      key: `generated-files/${fileId}`,
+      uploaded: new Date(),
+      customMetadata: {
+        accessToken: token,
+        clientId: "generated-file-client",
+        expiresAt: String(Date.now() + 60_000),
+        fileName: "报告.md",
+      },
+      writeHttpMetadata: (headers: Headers) => headers.set("content-type", "text/markdown; charset=utf-8"),
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(bytes);
+          controller.close();
+        },
+      }),
+    }));
+    const { env } = createEnv();
+    const response = await worker.fetch(
+      new Request(`https://ai.chatgpt.org.uk/api/generated-files/${fileId}?token=${token}`),
+      { ...env, IMAGE_RESULTS: { get } } as never,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-disposition")).toContain("filename*=UTF-8''");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(await response.text()).toBe("# 报告");
   });
 });
 
