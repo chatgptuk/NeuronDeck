@@ -330,7 +330,7 @@ describe("resumable chat session routing", () => {
       storage,
       waitUntil: vi.fn((promise: Promise<unknown>) => { background = promise; }),
     };
-    const run = vi.fn(async () => new ReadableStream({
+    const run = vi.fn(async (_model: string, _input: Record<string, unknown>) => new ReadableStream({
       start(controller) {
         controller.enqueue(new TextEncoder().encode(
           'data: {"response":"first"}\n\ndata: {"response":" second"}\n\ndata: [DONE]\n\n',
@@ -804,18 +804,22 @@ describe("speech synthesis API", () => {
 describe("chat streaming", () => {
   it("keeps non-tool model output genuinely streamed until the upstream response ends", async () => {
     let finishStream: (() => void) | undefined;
+    let modelInput: Record<string, unknown> | undefined;
     const model = "@cf/google/gemma-2b-it-lora";
-    const run = vi.fn(async () => new ReadableStream({
-      start(controller) {
-        controller.enqueue(new TextEncoder().encode('data: {"response":"first"}\n\n'));
-        finishStream = () => {
-          controller.enqueue(new TextEncoder().encode(
-            'data: {"response":"second"}\n\ndata: {"usage":{"prompt_tokens":3,"completion_tokens":5}}\n\ndata: [DONE]\n\n',
-          ));
-          controller.close();
-        };
-      },
-    }));
+    const run = vi.fn(async (_model: string, input: Record<string, unknown>) => {
+      modelInput = input;
+      return new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('data: {"response":"first"}\n\n'));
+          finishStream = () => {
+            controller.enqueue(new TextEncoder().encode(
+              'data: {"response":"second"}\n\ndata: {"usage":{"prompt_tokens":3,"completion_tokens":5}}\n\ndata: [DONE]\n\n',
+            ));
+            controller.close();
+          };
+        },
+      });
+    });
     const response = await worker.fetch(new Request("https://ai.chatgpt.org.uk/api/chat", {
       method: "POST",
       headers: {
@@ -842,6 +846,8 @@ describe("chat streaming", () => {
       // Drain the real upstream stream to verify it remains incremental through completion.
     }
     expect(run).toHaveBeenCalledOnce();
+    expect(JSON.stringify(modelInput)).toContain("clearly consenting adults");
+    expect(JSON.stringify(modelInput)).toContain("minors or age-ambiguous persons");
   });
 });
 
@@ -1982,6 +1988,7 @@ describe("Browser Run function calling", () => {
       viewport: { width: 390, height: 844, isMobile: true },
     });
     expect(JSON.stringify(modelRequests[0])).toContain("Trusted runtime clock");
+    expect(JSON.stringify(modelRequests[0])).toContain("clearly consenting adults");
     expect(JSON.stringify(modelRequests[0])).toContain("Asia/Shanghai");
     expect(JSON.stringify(modelRequests[1])).toContain("screenshot is already visible");
     expect(body).toContain('"status":"capturing"');

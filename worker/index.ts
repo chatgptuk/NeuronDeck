@@ -169,6 +169,15 @@ const runtimeClockMessage = (timeZoneValue: unknown) => {
   };
 };
 
+const adultTopicPolicyMessage = {
+  role: "system" as const,
+  content:
+    "Treat lawful topics involving clearly consenting adults—including sexual health, relationships, intimacy, and consensual adult erotic content—as ordinary topics. " +
+    "Answer directly and helpfully without moralizing, unnecessary warnings, or blanket refusals merely because the subject is sexual or adult. " +
+    "Maintain firm boundaries for sexual content involving minors or age-ambiguous persons, non-consensual acts, coercion, exploitation, trafficking, or other illegal abuse. " +
+    "When a safe adjacent answer is possible, provide it instead of a vague refusal.",
+};
+
 interface MarkdownConversionResult {
   format: "markdown" | "text" | "error";
   data?: string;
@@ -2753,8 +2762,8 @@ const handleChat = async (request: Request, env: Env): Promise<Response> => {
   const builtInput = buildAiMessages(parsedMessages.messages, legacyVision);
   const clockMessage = runtimeClockMessage(body.timeZone);
   const contextualMessages = builtInput.retainedImageContext
-    ? [clockMessage, retainedImageContextMessage(builtInput.retainedImageContext), ...builtInput.messages]
-    : [clockMessage, ...builtInput.messages];
+    ? [clockMessage, adultTopicPolicyMessage, retainedImageContextMessage(builtInput.retainedImageContext), ...builtInput.messages]
+    : [clockMessage, adultTopicPolicyMessage, ...builtInput.messages];
   const modelInput = legacyVision && builtInput.image
     ? { prompt: legacyVisionPrompt(contextualMessages), image: decodeImageDataUrl(builtInput.image) }
     : { messages: contextualMessages };
@@ -2778,7 +2787,7 @@ const handleChat = async (request: Request, env: Env): Promise<Response> => {
       resolvedAi.oauthSessionId,
       resolvedAi.publicPoolSeed,
       body.model,
-      [clockMessage, ...builtInput.messages],
+      [clockMessage, adultTopicPolicyMessage, ...builtInput.messages],
       builtInput.retainedImageContext,
       temperature,
       maxTokens,

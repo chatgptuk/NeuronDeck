@@ -8,7 +8,7 @@ export const translations = {
     languageName: "中文",
     switchLanguage: "切换到英文",
     defaultConversation: "新对话",
-    defaultSystemPrompt: "你是一位准确、周到的助手。请坦诚说明不确定之处，并使用清晰的格式。",
+    defaultSystemPrompt: "你是一位准确、周到的助手。请坦诚说明不确定之处，并使用清晰的格式。对明确为成年人的合法、自愿成人话题应自然、直接回答，不要说教或仅因涉及性与亲密关系而回避；对未成年人、非自愿、胁迫、剥削及违法伤害保持明确边界。",
     brandSubtitle: "轻盈的 AI 工作空间",
     closeSidebar: "关闭侧栏",
     openSidebar: "打开侧栏",
@@ -192,7 +192,7 @@ export const translations = {
     languageName: "EN",
     switchLanguage: "Switch to Chinese",
     defaultConversation: "New conversation",
-    defaultSystemPrompt: "You are a precise, thoughtful assistant. Be candid about uncertainty and use clear formatting.",
+    defaultSystemPrompt: "You are a precise, thoughtful assistant. Be candid about uncertainty and use clear formatting. Treat lawful, consensual topics involving clearly identified adults as ordinary subjects: answer naturally and directly without moralizing or refusing merely because sexuality or intimacy is involved. Maintain firm boundaries around minors, non-consent, coercion, exploitation, and illegal abuse.",
     brandSubtitle: "A lighter AI workspace",
     closeSidebar: "Close sidebar",
     openSidebar: "Open sidebar",
@@ -372,6 +372,16 @@ export const translations = {
     },
   },
 } as const;
+
+const legacyDefaultSystemPrompts = new Set([
+  "你是一位准确、周到的助手。请坦诚说明不确定之处，并使用清晰的格式。",
+  "You are a precise, thoughtful assistant. Be candid about uncertainty and use clear formatting.",
+]);
+
+export const isBuiltInDefaultSystemPrompt = (value: string): boolean =>
+  value === translations.zh.defaultSystemPrompt ||
+  value === translations.en.defaultSystemPrompt ||
+  legacyDefaultSystemPrompts.has(value);
 
 const modelDescriptionsZh: Record<string, string> = {
   "@cf/openai/gpt-oss-120b": "适合通用任务与智能体工作的生产级开放权重推理模型。",

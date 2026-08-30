@@ -33,6 +33,7 @@ import {
   getCapabilityLabel,
   getLocalizedError,
   getModelDescription,
+  isBuiltInDefaultSystemPrompt,
   translations,
   type Language,
 } from "./i18n";
@@ -415,8 +416,7 @@ function App() {
               : outputTokenPolicy.recommended,
             maxTokensCustomized,
             systemPrompt:
-              conversation.systemPrompt === translations.zh.defaultSystemPrompt ||
-              conversation.systemPrompt === translations.en.defaultSystemPrompt
+              isBuiltInDefaultSystemPrompt(conversation.systemPrompt)
                 ? translations[language].defaultSystemPrompt
                 : conversation.systemPrompt,
           };
@@ -436,8 +436,7 @@ function App() {
       conversations: current.conversations.map((conversation) => ({
         ...conversation,
         systemPrompt:
-          conversation.systemPrompt === translations.zh.defaultSystemPrompt ||
-          conversation.systemPrompt === translations.en.defaultSystemPrompt
+          isBuiltInDefaultSystemPrompt(conversation.systemPrompt)
             ? translations[language].defaultSystemPrompt
             : conversation.systemPrompt,
       })),
