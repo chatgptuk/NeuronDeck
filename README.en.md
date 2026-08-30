@@ -38,6 +38,7 @@ NeuronDeck brings Cloudflare-hosted chat models, multimodal input, image generat
 - Optional public quota pool with stable distribution and automatic failover across administrator-provided Cloudflare accounts
 - Optional Cloudflare OAuth so users can authorize their own accounts and use their own Workers AI quota
 - Multi-round Function Calling: one response can invoke several tools, deliver up to ten successful images with three shared recovery attempts for transient failures, and use Browser Run to search, read, and capture public webpages
+- Optional research mode: automatically searches and opens multiple independent sources, uses stable `[1] [2]` inline citations, shows source title, domain, and access time, and exports the cited response as a PDF in one click
 - AI file creation: tool-capable models can create and send real TXT, Markdown, PDF, CSV, and JSON downloads; PDFs use a safe Markdown-to-HTML rendering path
 - A trusted server-side current time and browser time zone are added to each request, so past and future dates can be judged without web access
 - Optional model health and cost center with per-model success rate, first-token latency, total duration, tokens, tool calls, estimated chat cost, and anonymous traffic trends
@@ -111,7 +112,7 @@ An administrator can provide up to 16 Cloudflare accounts for anonymous visitors
 
 The pool has an additional limit of 60 requests per minute in each Cloudflare location. Each visitor is limited to 10 chat requests, 15 image attempts, and 6 speech-synthesis requests per minute. A turn can return up to ten successful images and reserves three additional attempts for recoverable provider failures; invalid inputs, missing references, and content-policy rejections are not retried blindly. An invalid Secret fails closed instead of silently charging the Worker owner's account. Cloudflare limits an individual Secret/environment variable to 5 KB.
 
-Browser Run uses stateless Quick Actions. Page reads, screenshots, and PDF renders have a hard 45-second timeout, and completed or aborted calls leave no browser session, cookies, or background tabs behind. Screenshots appear as real downloadable images but do not inherit the user's local signed-in browser state. A chat turn is limited to four Browser Run actions to prevent accidental quota use.
+Browser Run uses stateless Quick Actions. Page reads, screenshots, and PDF renders have a hard 45-second timeout, and completed or aborted calls leave no browser session, cookies, or background tabs behind. Screenshots appear as real downloadable images but do not inherit the user's local signed-in browser state. Normal chat turns are limited to four Browser Run actions; an explicitly enabled research turn can use up to eight so it can search and verify multiple sources. Research-report PDFs are rendered immediately through the same public pool and returned directly to the browser without creating a persistent browser session.
 
 Cloudflare documentation: [Workers AI REST API](https://developers.cloudflare.com/workers-ai/get-started/rest-api/) · [Browser Run Quick Actions](https://developers.cloudflare.com/browser-run/quick-actions/) · [Worker Secrets](https://developers.cloudflare.com/workers/configuration/secrets/) · [Worker environment variable limits](https://developers.cloudflare.com/workers/platform/limits/#environment-variables)
 

@@ -1,14 +1,40 @@
-import { Camera, ExternalLink, Globe2, Search } from "lucide-react";
+import { Camera, Clock3, Download, ExternalLink, Globe2, LoaderCircle, Search } from "lucide-react";
+import { useState } from "react";
 import type { Language } from "../i18n";
+import { translations } from "../i18n";
+import { downloadResearchReportPdf } from "../lib/research-report";
 import type { WebResearchState, WebSource } from "../types";
 
 interface WebResearchPanelProps {
   language: Language;
   state?: WebResearchState;
   sources?: WebSource[];
+  reportTitle?: string;
+  reportContent?: string;
 }
 
-export function WebResearchPanel({ language, state, sources = [] }: WebResearchPanelProps) {
+const formatAccessedAt = (value: string | undefined, language: Language): string | null => {
+  if (!value) return null;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+  return new Intl.DateTimeFormat(language === "zh" ? "zh-CN" : "en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+};
+
+export function WebResearchPanel({
+  language,
+  state,
+  sources = [],
+  reportTitle = "NeuronDeck Research",
+  reportContent = "",
+}: WebResearchPanelProps) {
+  const t = translations[language];
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   if ((!state || state.status === "complete") && !sources.length) return null;
   const active = state?.status === "searching" || state?.status === "reading" || state?.status === "capturing";
   const label = state?.status === "searching"
@@ -24,6 +50,19 @@ export function WebResearchPanel({ language, state, sources = [] }: WebResearchP
     try { return new URL(state.url).hostname.replace(/^www\./, ""); } catch { return state.url; }
   })() : state?.message);
 
+  const exportPdf = async () => {
+    if (!reportContent.trim() || !sources.length || exporting) return;
+    setExporting(true);
+    setExportError(null);
+    try {
+      await downloadResearchReportPdf({ title: reportTitle, content: reportContent, sources, language });
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : t.researchPdfFailed);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <section className={state?.status === "error" ? "web-research error" : "web-research"} aria-live="polite">
       {state && state.status !== "complete" ? (
@@ -35,15 +74,31 @@ export function WebResearchPanel({ language, state, sources = [] }: WebResearchP
       ) : null}
       {sources.length ? (
         <div className="web-source-list">
-          <span className="web-source-heading"><Globe2 size={13} />{language === "zh" ? "来源" : "Sources"}</span>
-          <div>
-            {sources.map((source) => (
+          <div className="web-source-heading">
+            <span><Globe2 size={13} />{t.researchSources(sources.length)}</span>
+            {reportContent.trim() ? (
+              <button type="button" onClick={() => void exportPdf()} disabled={exporting}>
+                {exporting ? <LoaderCircle className="spinning" size={13} /> : <Download size={13} />}
+                {exporting ? t.researchPdfExporting : t.researchPdfExport}
+              </button>
+            ) : null}
+          </div>
+          <div className="web-source-cards">
+            {sources.map((source, offset) => (
               <a href={source.url} key={source.url} target="_blank" rel="noopener noreferrer">
-                <span><small>{source.domain}</small><strong>{source.title}</strong></span>
+                <b>[{source.index ?? offset + 1}]</b>
+                <span>
+                  <small>{source.domain}</small>
+                  <strong>{source.title}</strong>
+                  {formatAccessedAt(source.accessedAt, language) ? (
+                    <em><Clock3 size={11} />{t.researchSourceAccessed(formatAccessedAt(source.accessedAt, language)!)}</em>
+                  ) : null}
+                </span>
                 <ExternalLink size={13} />
               </a>
             ))}
           </div>
+          {exportError ? <p className="web-source-error" role="alert">{exportError}</p> : null}
         </div>
       ) : null}
     </section>

@@ -2091,6 +2091,149 @@ describe("Browser Run function calling", () => {
     expect(body).not.toContain(publicAccount.apiToken);
   });
 
+  it("research mode opens multiple sources and assigns stable numbered citations with access times", async () => {
+    const publicAccount = publicPoolAccounts[0];
+    const modelRequests: Array<Record<string, unknown>> = [];
+    const browserTargets: string[] = [];
+    let modelRound = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/browser-rendering/markdown")) {
+        const requestBody = JSON.parse(String(init?.body)) as { url: string };
+        browserTargets.push(requestBody.url);
+        if (requestBody.url.includes("duckduckgo.com")) {
+          return Response.json({
+            success: true,
+            result:
+              "[Cloudflare Browser Run](https://developers.cloudflare.com/browser-run/)\n" +
+              "[Workers AI](https://developers.cloudflare.com/workers-ai/)",
+          }, { headers: { "x-browser-ms-used": "20" } });
+        }
+        return Response.json({
+          success: true,
+          result: requestBody.url.includes("workers-ai")
+            ? "# Workers AI\n\nWorkers AI runs models on Cloudflare's network."
+            : "# Browser Run\n\nBrowser Run provides browser rendering APIs.",
+        }, { headers: { "x-browser-ms-used": "18" } });
+      }
+
+      const requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      modelRequests.push(requestBody);
+      modelRound += 1;
+      if (modelRound === 1) {
+        return Response.json({ success: true, result: { choices: [{ message: { content: "Uncited shortcut answer." } }] } });
+      }
+      if (modelRound === 2) {
+        return Response.json({ success: true, result: { choices: [{ message: { tool_calls: [{
+          id: "research-search",
+          type: "function",
+          function: { name: "search_web", arguments: JSON.stringify({ query: "Cloudflare Browser Run Workers AI" }) },
+        }] } }] } });
+      }
+      if (modelRound === 3) {
+        return Response.json({ success: true, result: { choices: [{ message: { tool_calls: [
+          {
+            id: "research-open-one",
+            type: "function",
+            function: { name: "open_webpage", arguments: JSON.stringify({ url: "https://developers.cloudflare.com/browser-run/" }) },
+          },
+          {
+            id: "research-open-two",
+            type: "function",
+            function: { name: "open_webpage", arguments: JSON.stringify({ url: "https://developers.cloudflare.com/workers-ai/" }) },
+          },
+        ] } }] } });
+      }
+      return new Response(
+        'data: {"response":"## Verified facts\\n\\nBrowser Run exposes browser APIs.[1] Workers AI runs hosted models.[2]\\n\\n## Analysis and inference\\n\\nTogether they can support a cited research workflow."}\n\ndata: [DONE]\n\n',
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await worker.fetch(new Request("https://ai.chatgpt.org.uk/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "accept-language": "en",
+        "x-neurondeck-client": "research-mode-client",
+      },
+      body: JSON.stringify({
+        model: chatModel,
+        researchMode: true,
+        messages: [{ role: "user", content: "Research how Browser Run and Workers AI work together." }],
+      }),
+    }), {
+      AI: { run: vi.fn(), toMarkdown: vi.fn() },
+      ASSETS: { fetch: vi.fn() },
+      CHAT_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+      PUBLIC_AI_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+      PUBLIC_AI_ACCOUNTS: JSON.stringify({ accounts: [publicAccount] }),
+    } as never);
+    const body = await response.text();
+
+    expect(modelRound).toBe(4);
+    expect(browserTargets).toHaveLength(3);
+    expect(JSON.stringify(modelRequests[0])).toContain("Research mode is enabled");
+    expect(JSON.stringify(modelRequests[1])).toContain("Do not answer yet");
+    expect(body).not.toContain("Uncited shortcut answer");
+    expect(body).toMatch(/"index":1/);
+    expect(body).toMatch(/"index":2/);
+    expect(body).toMatch(/"accessedAt":"\d{4}-\d{2}-\d{2}T/);
+    expect(body).toContain("Browser Run exposes browser APIs.[1]");
+    expect(body).toContain("Workers AI runs hosted models.[2]");
+  });
+
+  it("exports a cited research response as a direct PDF using the public Browser Run account", async () => {
+    const publicAccount = publicPoolAccounts[0];
+    const pdf = new TextEncoder().encode("%PDF-1.7\nresearch-report");
+    let pdfRequest: { authorization: string | null; body: Record<string, unknown> } | undefined;
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      pdfRequest = {
+        authorization: new Headers(init?.headers).get("authorization"),
+        body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+      };
+      return new Response(pdf, {
+        headers: { "content-type": "application/pdf", "x-browser-ms-used": "44" },
+      });
+    }));
+
+    const response = await worker.fetch(new Request("https://ai.chatgpt.org.uk/api/research-report", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-neurondeck-client": "research-pdf-client",
+      },
+      body: JSON.stringify({
+        title: "Cloudflare research",
+        content: "## Verified facts\n\nBrowser Run is documented.[1]",
+        language: "en",
+        sources: [{
+          title: "Browser Run documentation",
+          url: "https://developers.cloudflare.com/browser-run/",
+          domain: "spoofed.example",
+          index: 1,
+          accessedAt: "2026-08-30T12:00:00.000Z",
+        }],
+      }),
+    }), {
+      AI: { run: vi.fn(), toMarkdown: vi.fn() },
+      ASSETS: { fetch: vi.fn() },
+      CHAT_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+      PUBLIC_AI_ACCOUNTS: JSON.stringify({ accounts: [publicAccount] }),
+    } as never);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("application/pdf");
+    expect(response.headers.get("content-disposition")).toContain("Cloudflare research.pdf");
+    expect(new TextDecoder().decode(await response.arrayBuffer())).toContain("%PDF-1.7");
+    expect(pdfRequest?.authorization).toBe(`Bearer ${publicAccount.apiToken}`);
+    const html = String(pdfRequest?.body.html ?? "");
+    expect(html).toContain("developers.cloudflare.com");
+    expect(html).not.toContain("spoofed.example");
+    expect(html).toContain("Accessed");
+  });
+
   it("captures a webpage screenshot, streams the real image, and supplies a trusted runtime clock", async () => {
     const publicAccount = publicPoolAccounts[0];
     const modelRequests: Array<Record<string, unknown>> = [];

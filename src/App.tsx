@@ -2,6 +2,7 @@ import {
   Archive,
   AudioLines,
   Bell,
+  BookOpen,
   Check,
   ChevronDown,
   Cloud,
@@ -211,6 +212,7 @@ const createConversation = (
     maxTokens: outputTokenPolicy.recommended,
     maxTokensCustomized: false,
     imageModelId,
+    researchMode: false,
     messages: [],
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -289,6 +291,7 @@ function App() {
   const activeModel = getModel(models, activeConversation.modelId);
   const activeModelSupportsAttachments = supportsMultimodalAttachments(activeModel);
   const activeModelSupportsTools = activeModel.capabilities.includes("tools");
+  const researchModeAvailable = activeModelSupportsTools && cloudflareAuth.publicPoolConfigured;
   const activeImageModel = getImageModel(activeConversation.imageModelId);
   const activeOutputTokenPolicy = getOutputTokenPolicy(activeModel.contextWindow);
   const siteQuotaLabel = cloudflareAuth.publicPoolConfigured ? t.cloudflarePublicPool : t.cloudflareSiteQuota;
@@ -411,6 +414,7 @@ function App() {
             imageModelId: isImageModelId(conversation.imageModelId)
               ? conversation.imageModelId
               : DEFAULT_IMAGE_MODEL_ID,
+            researchMode: conversation.researchMode === true,
             maxTokens: maxTokensCustomized
               ? clampOutputTokens(conversation.maxTokens, outputTokenPolicy)
               : outputTokenPolicy.recommended,
@@ -693,6 +697,7 @@ function App() {
           temperature: conversation.temperature,
           maxTokens: conversation.maxTokens,
           imageModel: conversation.imageModelId,
+          researchMode: conversation.researchMode === true,
           imageReferences: getImageReferencesForRequest(contextMessages),
           timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
         });
@@ -1295,6 +1300,7 @@ function App() {
 
   const newConversation = () => {
     const conversation = createConversation(language, activeConversation.modelId, activeConversation.imageModelId);
+    conversation.researchMode = activeConversation.researchMode === true;
     setWorkspace((current) => ({
       ...current,
       conversations: [conversation, ...current.conversations],
@@ -1362,6 +1368,15 @@ function App() {
           : []),
         message.content,
         "",
+        ...(message.webSources?.length
+          ? [
+              language === "zh" ? "### 来源" : "### Sources",
+              ...message.webSources.map((source, offset) =>
+                `${source.index ?? offset + 1}. [${source.title}](${source.url})${source.accessedAt ? ` · ${source.accessedAt}` : ""}`,
+              ),
+              "",
+            ]
+          : []),
       ]),
     ].join("\n");
     const url = URL.createObjectURL(new Blob([markdown], { type: "text/markdown" }));
@@ -1381,6 +1396,7 @@ function App() {
       maxTokens: conversation.maxTokensCustomized
         ? clampOutputTokens(conversation.maxTokens, outputTokenPolicy)
         : outputTokenPolicy.recommended,
+      researchMode: selectedModel.capabilities.includes("tools") ? conversation.researchMode : false,
       updatedAt: now(),
     }));
     if (!supportsMultimodalAttachments(selectedModel)) {
@@ -1585,6 +1601,8 @@ function App() {
                           state={message.webResearch}
                           sources={message.webSources}
                           language={language}
+                          reportTitle={activeConversation.title}
+                          reportContent={message.content}
                         />
                         {message.reasoning && (
                           <details className="reasoning-block" open={message.status === "streaming"}>
@@ -1598,7 +1616,7 @@ function App() {
                         )}
                         {message.content ? (
                           <Suspense fallback={<p>{message.content}</p>}>
-                            <MarkdownMessage content={message.content} language={language} />
+                            <MarkdownMessage content={message.content} language={language} sources={message.webSources} />
                           </Suspense>
                         ) : message.imageGeneration || message.generatedImages?.length || message.browserScreenshots?.length || message.generatedFiles?.length || message.webResearch ? null : (
                           <div className="typing"><span /><span /><span /></div>
@@ -1731,6 +1749,27 @@ function App() {
                         {attachmentBusy ? <LoaderCircle className="spinning" size={17} /> : <Paperclip size={17} />}
                       </button>
                     ) : null}
+                    <button
+                      className={activeConversation.researchMode ? "research-mode-button active" : "research-mode-button"}
+                      type="button"
+                      aria-pressed={activeConversation.researchMode === true}
+                      disabled={generating || (!activeConversation.researchMode && !researchModeAvailable)}
+                      title={activeConversation.researchMode
+                        ? t.researchModeDescription
+                        : !activeModelSupportsTools
+                          ? t.researchModeNeedsTools
+                          : !cloudflareAuth.publicPoolConfigured
+                            ? t.researchModeNeedsBrowser
+                            : t.researchModeDescription}
+                      onClick={() => updateConversation(activeConversation.id, (conversation) => ({
+                        ...conversation,
+                        researchMode: !conversation.researchMode,
+                        updatedAt: now(),
+                      }))}
+                    >
+                      <BookOpen size={16} />
+                      <span>{activeConversation.researchMode ? t.researchModeActive : t.researchMode}</span>
+                    </button>
                     <div className="composer-badges">
                       <button onClick={() => setModelPickerOpen(true)} type="button"><span className="active-model-mark"><ProviderLogo provider={activeModel.provider} /></span>{activeModel.name}</button>
                       {activeModelSupportsTools ? (

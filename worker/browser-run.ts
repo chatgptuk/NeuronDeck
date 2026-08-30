@@ -19,6 +19,8 @@ export interface WebSource {
   title: string;
   url: string;
   domain: string;
+  index?: number;
+  accessedAt?: string;
 }
 
 export interface BrowserRunResult {

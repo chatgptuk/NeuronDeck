@@ -62,6 +62,8 @@ export interface WebSource {
   title: string;
   url: string;
   domain: string;
+  index?: number;
+  accessedAt?: string;
 }
 
 export interface BrowserScreenshot {
@@ -127,6 +129,7 @@ export interface Conversation {
   maxTokens: number;
   maxTokensCustomized?: boolean;
   imageModelId: string;
+  researchMode?: boolean;
   messages: ChatMessage[];
   createdAt: string;
   updatedAt: string;
