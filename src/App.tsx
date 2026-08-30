@@ -1486,6 +1486,14 @@ function App() {
           <button className="sidebar-action" onClick={exportConversation} type="button">
             <Download size={16} />{t.exportConversation}
           </button>
+          <a className="sidebar-action" href={language === "zh" ? "/zh/cloudflare-workers-ai-chat" : "/en/cloudflare-workers-ai-chat"}>
+            <BookOpen size={16} />{t.productGuide}
+          </a>
+          <nav className="sidebar-legal" aria-label={language === "zh" ? "站点信息" : "Site information"}>
+            <a href="/privacy.html">{t.privacyPolicy}</a>
+            <span aria-hidden="true">·</span>
+            <a href="/terms.html">{t.termsOfUse}</a>
+          </nav>
         </div>
       </aside>
 

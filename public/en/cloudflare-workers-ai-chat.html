@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f1f4ef" />
+    <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1" />
+    <meta name="description" content="NeuronDeck is a multi-model Cloudflare Workers AI workspace for chat, cited web research, image and file generation, image and PDF input, and bring-your-own Cloudflare quota." />
+    <link rel="canonical" href="https://ai.chatgpt.org.uk/en/cloudflare-workers-ai-chat" />
+    <link rel="alternate" hreflang="zh-CN" href="https://ai.chatgpt.org.uk/zh/cloudflare-workers-ai-chat" />
+    <link rel="alternate" hreflang="en" href="https://ai.chatgpt.org.uk/en/cloudflare-workers-ai-chat" />
+    <link rel="alternate" hreflang="x-default" href="https://ai.chatgpt.org.uk/en/cloudflare-workers-ai-chat" />
+    <link rel="icon" href="/favicon.svg" />
+    <link rel="stylesheet" href="/seo.css" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="NeuronDeck" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:title" content="Cloudflare Workers AI Multi-Model Chat Workspace | NeuronDeck" />
+    <meta property="og:description" content="Chat, research the web with citations, generate images and files, and connect your own Cloudflare account." />
+    <meta property="og:url" content="https://ai.chatgpt.org.uk/en/cloudflare-workers-ai-chat" />
+    <meta property="og:image" content="https://ai.chatgpt.org.uk/icon-512.png" />
+    <meta name="twitter:card" content="summary" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebApplication",
+            "@id": "https://ai.chatgpt.org.uk/#app",
+            "name": "NeuronDeck",
+            "url": "https://ai.chatgpt.org.uk/",
+            "description": "A multi-model chat, research, and creation workspace powered by Cloudflare Workers AI.",
+            "applicationCategory": "UtilitiesApplication",
+            "operatingSystem": "Any",
+            "inLanguage": ["zh-CN", "en"],
+            "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+          },
+          {
+            "@type": "FAQPage",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "How does NeuronDeck relate to Cloudflare Workers AI?",
+                "acceptedAnswer": { "@type": "Answer", "text": "NeuronDeck is a web workspace running on Cloudflare Workers. It uses Workers AI to call Cloudflare-hosted chat, image, and speech models." }
+              },
+              {
+                "@type": "Question",
+                "name": "Do I need to connect my own Cloudflare account?",
+                "acceptedAnswer": { "@type": "Answer", "text": "No. You can use the site's shared quota when available, or connect your own Cloudflare account with OAuth so model requests count toward your selected account's Workers AI usage." }
+              },
+              {
+                "@type": "Question",
+                "name": "Which files can NeuronDeck work with?",
+                "acceptedAnswer": { "@type": "Answer", "text": "Compatible models can receive images, TXT, and PDF content. The AI file tool can also create downloadable text, Markdown, CSV, JSON, and PDF files. Exact capabilities depend on the selected model." }
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+    <title>Cloudflare Workers AI Multi-Model Chat Workspace | NeuronDeck</title>
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="site-header">
+        <a class="brand" href="/"><img src="/favicon.svg" alt="" />NeuronDeck</a>
+        <nav class="site-nav" aria-label="Main navigation">
+          <a href="#features">Features</a>
+          <a href="#faq">FAQ</a>
+          <a class="language-link" href="/zh/cloudflare-workers-ai-chat" lang="zh-CN">中文</a>
+          <a class="nav-cta" href="/">Open workspace</a>
+        </nav>
+      </header>
+
+      <main>
+        <section class="hero">
+          <div>
+            <span class="eyebrow">Cloudflare Workers AI</span>
+            <h1>Every AI model, in one quieter workspace</h1>
+            <p class="hero-lead">NeuronDeck brings Cloudflare-hosted chat models, cited web research, image generation, and file creation into one focused interface. Try the shared site quota or securely connect your own Cloudflare account.</p>
+            <div class="hero-actions">
+              <a class="primary-cta" href="/">Open NeuronDeck</a>
+              <a class="text-link" href="https://github.com/chatgptuk/NeuronDeck">View source on GitHub</a>
+            </div>
+          </div>
+          <aside class="signal-card" aria-label="NeuronDeck capabilities">
+            <h2>From a question to something you can use</h2>
+            <ul class="signal-list">
+              <li><b>01</b><span>Choose Cloudflare-hosted chat models by capability, price, and context window.</span></li>
+              <li><b>02</b><span>Research mode reads multiple pages, cites factual claims, and keeps the sources visible.</span></li>
+              <li><b>03</b><span>Tool calling creates images, web screenshots, PDFs, and downloadable files.</span></li>
+              <li><b>04</b><span>Chat history stays in your browser while active streams can resume temporarily.</span></li>
+            </ul>
+          </aside>
+        </section>
+
+        <section class="content-section" id="features">
+          <div class="section-heading">
+            <h2>More than a model picker</h2>
+            <p>Models are only the starting point. NeuronDeck joins multi-step tool calling, source review, attachments, downloads, and a polished mobile experience into one continuous workflow.</p>
+          </div>
+          <div class="feature-grid">
+            <article class="feature"><span>CHAT</span><h3>Multi-model chat</h3><p>Filter by reasoning, vision, tool use, context window, and price, then keep separate conversations for separate jobs.</p></article>
+            <article class="feature"><span>RESEARCH</span><h3>Cited web research</h3><p>Search and read several pages, add numbered citations to factual claims, show access times, and label model inference clearly.</p></article>
+            <article class="feature"><span>CREATE</span><h3>Images and files</h3><p>Let capable chat models invoke image and file tools semantically, use several tools in one turn, and retry failed images separately.</p></article>
+            <article class="feature"><span>INPUT</span><h3>Images, TXT, and PDF</h3><p>Attach images and common text documents to compatible models for visual analysis, summarization, and extraction.</p></article>
+            <article class="feature"><span>ACCOUNT</span><h3>Bring your Cloudflare quota</h3><p>Connect with OAuth, select an account, and use its Workers AI quota. Tokens remain encrypted on the server.</p></article>
+            <article class="feature"><span>INSTALL</span><h3>PWA and completion alerts</h3><p>Install NeuronDeck to your home screen and receive a local alert when a long generation finishes in the background.</p></article>
+          </div>
+        </section>
+
+        <section class="content-section">
+          <div class="section-heading">
+            <h2>Start in three steps</h2>
+            <p>There is nothing to install. Open the workspace with shared quota, then connect a Cloudflare account only if you want independent usage and billing.</p>
+          </div>
+          <div class="steps">
+            <article class="step"><h3>Choose a model</h3><p>Pick a general, coding, vision, reasoning, or tool-capable model for the job.</p></article>
+            <article class="step"><h3>Describe the outcome</h3><p>Ask a question or attach an image, TXT, or PDF. Turn on research mode when the answer depends on current web facts.</p></article>
+            <article class="step"><h3>Review and export</h3><p>Inspect citations and tool results, then download the response, research report, image, or generated file.</p></article>
+          </div>
+        </section>
+
+        <section class="content-section" id="faq">
+          <div class="section-heading">
+            <h2>Frequently asked questions</h2>
+            <p>Short answers about quota, privacy, and file support.</p>
+          </div>
+          <div class="faq">
+            <details><summary>How does NeuronDeck relate to Cloudflare Workers AI?</summary><p>NeuronDeck is an open-source web workspace running on Cloudflare Workers. It uses Workers AI for Cloudflare-hosted chat, image, and speech models. Actual availability, price, and quota depend on Cloudflare and your account plan.</p></details>
+            <details><summary>Do I need to connect my own Cloudflare account?</summary><p>No. You can use the site's shared quota when available. Once connected, model requests count toward the Cloudflare account you select. Authorization uses OAuth 2.0 with PKCE; NeuronDeck never reads your Cloudflare password.</p></details>
+            <details><summary>Which files can I upload and create?</summary><p>Compatible models can receive images, TXT, and PDF content. The file tool can create downloadable text, Markdown, CSV, JSON, and PDF results. Exact support still depends on the selected model and request limits.</p></details>
+            <details><summary>Are conversations uploaded and stored forever?</summary><p>Long-term chat history stays in your current browser by default. Content you send is processed by the server and selected model; active stream events are retained temporarily only so a refresh or brief disconnect can resume.</p></details>
+          </div>
+        </section>
+
+        <section class="content-section">
+          <div class="closing">
+            <h2>Choose a model and let the next thing take shape.</h2>
+            <a class="primary-cta" href="/">Start now</a>
+          </div>
+        </section>
+      </main>
+
+      <footer class="site-footer">
+        <span>© 2026 NeuronDeck · Built on Cloudflare</span>
+        <nav class="footer-links" aria-label="Site information"><a href="/privacy.html">Privacy</a><a href="/terms.html">Terms</a><a href="https://github.com/chatgptuk/NeuronDeck">GitHub</a></nav>
+      </footer>
+    </div>
+  </body>
+</html>

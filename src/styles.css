@@ -460,12 +460,16 @@ input:focus-visible {
 .sidebar-footer { display: flex; flex-direction: column; gap: 4px; margin: 12px 2px 0; border-top: 1px solid var(--line); padding-top: 12px; }
 .storage-card,
 .sidebar-action { display: flex; align-items: center; gap: 10px; border: 0; border-radius: 12px; background: transparent; padding: 8px 9px; color: var(--muted-strong); text-align: left; }
+.sidebar-action { text-decoration: none; }
 .storage-card svg { color: var(--accent); }
 .storage-card div { display: flex; flex-direction: column; gap: 2px; }
 .storage-card strong { color: var(--text); font-size: 10px; }
 .storage-card span,
 .sidebar-action { font-size: 10px; }
 .sidebar-action:hover { background: color-mix(in srgb, var(--panel-raised) 55%, transparent); color: var(--text); }
+.sidebar-legal { display: flex; align-items: center; gap: 6px; padding: 4px 9px 0; color: var(--muted); font-size: 9px; }
+.sidebar-legal a { color: inherit; text-decoration: none; }
+.sidebar-legal a:hover { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
 
 .main-panel {
   position: relative;
@@ -938,6 +942,7 @@ input:focus-visible {
   .storage-card strong,
   .storage-card span,
   .sidebar-action { font-size: 11px; }
+  .sidebar-legal { font-size: 10px; }
   .conversation-item { min-height: 58px; padding-right: 50px; }
   .conversation-delete { right: 4px; width: 42px; height: 42px; border-color: color-mix(in srgb, var(--line) 64%, transparent); border-radius: 13px; background: color-mix(in srgb, var(--panel-raised) 44%, transparent); opacity: 0.72; pointer-events: auto; }
   .conversation-delete:active { background: color-mix(in srgb, var(--danger) 9%, var(--panel-raised)); color: var(--danger); opacity: 1; }
