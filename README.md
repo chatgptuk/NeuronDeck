@@ -37,6 +37,7 @@ NeuronDeck 把 Cloudflare 托管的对话模型、多模态输入、图片生成
 - IndexedDB 本地对话历史、移动端优化、消息时间与生成耗时
 - 可选站点公共额度池：管理员可安全接入多个 Cloudflare 账户，自动分流并在额度故障时切换
 - 可选 Cloudflare OAuth：用户可授权自己的账户并使用自己的 Workers AI 额度
+- 可选私有管理后台：匿名统计独立浏览器、活跃趋势、聊天、生图、语音与生成错误
 - 同源 API 校验、请求验证、加密 OAuth 会话与每分钟请求限制
 
 ## 一键部署
@@ -135,6 +136,18 @@ Cloudflare 文档：[Workers AI REST API](https://developers.cloudflare.com/work
 
 > `CLOUDFLARE_OAUTH_CLIENT_ID` 不是密码；`OAUTH_SESSION_SECRET` 必须只保存在 Cloudflare Secret 中，不能提交到 Git。
 
+### 可选：启用私有管理后台
+
+后台位于 `/admin`，复用上面的 Cloudflare OAuth 登录。只有 `ADMIN_ACCOUNT_ID` Secret 中列出的 Cloudflare Account ID 才能读取统计；普通用户即使连接自己的 Cloudflare 账户也无法访问。
+
+```bash
+wrangler secret put ADMIN_ACCOUNT_ID --config .wrangler.production.jsonc
+```
+
+使用公开模板时将配置路径换成 `wrangler.jsonc`。输入部署者的 32 位 Cloudflare Account ID 后重新部署，再使用该账户连接 Cloudflare 并打开 `https://你的域名/admin`。多个管理员账户可用英文逗号分隔。
+
+统计从启用后台后开始累计，不能还原此前的访问量。“用户”按浏览器生成的随机标识去重；服务端只保存其 SHA-256 哈希和聚合事件数量，不记录消息内容、IP、文件名、生成图片或 Cloudflare Token。公开 Wrangler 配置已包含 `METRICS_DB` D1 绑定，部署时会自动创建数据库，表结构由 Worker 首次使用时初始化。
+
 ## 本地开发
 
 ### 环境要求
@@ -162,7 +175,7 @@ wrangler dev --port 8787
 
 ## 手动部署
 
-`wrangler.jsonc` 是不强制依赖 R2 的可移植公开模板：它启用 `workers.dev`，并让 Wrangler 为当前账户配置 Workers AI、Durable Objects 与 KV。需要 Workflow/R2 后台生图时，再按上文增加相应绑定。
+`wrangler.jsonc` 是不强制依赖 R2 的可移植公开模板：它启用 `workers.dev`，并让 Wrangler 为当前账户配置 Workers AI、Durable Objects、D1 与 KV。需要 Workflow/R2 后台生图时，再按上文增加相应绑定。
 
 ```bash
 command -v wrangler
@@ -192,14 +205,15 @@ node scripts/sync-models.mjs
 浏览器
 ├── React + Vite 界面
 ├── IndexedDB 对话与设置
-└── /api/models · /api/chat · /api/images · /api/tts · /api/attachments
+└── /api/models · /api/chat · /api/tts · /api/attachments · /api/admin
                     │
                     ▼
 Cloudflare Worker
 ├── 模型白名单、输入校验与真正的 SSE 转发
 ├── Workers AI Binding / 公共凭证池 / 用户授权后的 REST API
 ├── Function Calling、按需语音合成与自动退化的图片返回
-├── Durable Object 流式续传 · KV 加密 OAuth 会话 · 可选 Workflow/R2 图片结果
+├── Durable Object 流式续传 · D1 匿名站点统计 · KV 加密 OAuth 会话
+├── 可选 Workflow/R2 图片结果
 └── Workers Static Assets
 ```
 

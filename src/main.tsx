@@ -1,6 +1,7 @@
 import { Component, StrictMode, type ErrorInfo, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import { Admin } from "./Admin";
 import "highlight.js/styles/github.css";
 import "./styles.css";
 
@@ -42,7 +43,7 @@ class AppErrorBoundary extends Component<{ children: ReactNode }, AppErrorBounda
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <AppErrorBoundary>
-      <App />
+      {/^\/admin\/?$/.test(window.location.pathname) ? <Admin /> : <App />}
     </AppErrorBoundary>
   </StrictMode>,
 );

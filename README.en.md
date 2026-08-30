@@ -37,6 +37,7 @@ NeuronDeck brings Cloudflare-hosted chat models, multimodal input, image generat
 - Browser-local IndexedDB history, mobile refinements, message timestamps, and generation duration
 - Optional public quota pool with stable distribution and automatic failover across administrator-provided Cloudflare accounts
 - Optional Cloudflare OAuth so users can authorize their own accounts and use their own Workers AI quota
+- Optional private admin dashboard for anonymous browser, activity, chat, image, speech, and generation-error metrics
 - Same-origin API checks, request validation, encrypted OAuth sessions, and per-minute rate limiting
 
 ## One-click deployment
@@ -135,6 +136,18 @@ Cloudflare documentation: [Workers AI REST API](https://developers.cloudflare.co
 
 > `CLOUDFLARE_OAUTH_CLIENT_ID` is not a password. `OAUTH_SESSION_SECRET` must remain in Cloudflare Secrets and must never be committed to Git.
 
+### Optional: enable the private admin dashboard
+
+The dashboard lives at `/admin` and reuses the Cloudflare OAuth login above. Only a Cloudflare Account ID listed in the `ADMIN_ACCOUNT_ID` Secret can read statistics; regular users cannot access it after connecting their own accounts.
+
+```bash
+wrangler secret put ADMIN_ACCOUNT_ID --config .wrangler.production.jsonc
+```
+
+Use `wrangler.jsonc` when deploying from the portable template. Enter the deployer's 32-character Cloudflare Account ID, deploy again, connect that account, and open `https://your-domain.example/admin`. Separate multiple administrator accounts with commas.
+
+Collection starts when the dashboard is enabled and cannot reconstruct earlier traffic. “Users” are deduplicated using a random browser identifier. Only its SHA-256 hash and aggregate event counts are stored—never message content, IPs, filenames, generated images, or Cloudflare tokens. The public Wrangler configuration includes a `METRICS_DB` D1 binding; deployment auto-provisions the database and the Worker initializes its schema on first use.
+
 ## Local development
 
 ### Requirements
@@ -162,7 +175,7 @@ For Vite HMR, keep the Worker on port `8787` and run `npm run dev` in a second t
 
 ## Manual deployment
 
-`wrangler.jsonc` is the portable public template without a mandatory R2 dependency. It enables `workers.dev` and lets Wrangler configure Workers AI, Durable Objects, and KV in the current account. Add R2 and Workflows only when the additional background image-job channel is needed.
+`wrangler.jsonc` is the portable public template without a mandatory R2 dependency. It enables `workers.dev` and lets Wrangler configure Workers AI, Durable Objects, D1, and KV in the current account. Add R2 and Workflows only when the additional background image-job channel is needed.
 
 ```bash
 command -v wrangler
@@ -192,14 +205,15 @@ The sync script only permits a system-global Wrangler binary. It reads the curre
 Browser
 ├── React + Vite interface
 ├── IndexedDB conversations and settings
-└── /api/models · /api/chat · /api/images · /api/tts · /api/attachments
+└── /api/models · /api/chat · /api/tts · /api/attachments · /api/admin
                     │
                     ▼
 Cloudflare Worker
 ├── model allowlist, input validation, and genuine SSE forwarding
 ├── Workers AI binding / public credential pool / user-authorized REST API
 ├── Function Calling, on-demand speech synthesis, and adaptive image delivery
-├── Durable Object stream resume · encrypted OAuth KV · optional Workflow/R2 image results
+├── Durable Object stream resume · D1 anonymous site metrics · encrypted OAuth KV
+├── optional Workflow/R2 image results
 └── Workers Static Assets
 ```
 

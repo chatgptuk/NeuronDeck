@@ -68,6 +68,8 @@ import {
 } from "./lib/chat-context";
 import { isRecoverableStreamError, waitForPageVisible } from "./lib/stream-recovery";
 import { waitForImageJob } from "./lib/image-jobs";
+import { getClientId } from "./lib/client-id";
+import { recordAnonymousVisit } from "./lib/metrics";
 import { recoverInterruptedMessage } from "./lib/workspace-recovery";
 import { formatElapsedDuration, formatMessageTimestamp } from "./lib/time";
 import {
@@ -210,15 +212,6 @@ const createWorkspace = (language: Language): WorkspaceState => {
   };
 };
 
-const getClientId = (): string => {
-  const key = "neurondeck-client-id";
-  const existing = localStorage.getItem(key);
-  if (existing) return existing;
-  const value = crypto.randomUUID().replaceAll("-", "");
-  localStorage.setItem(key, value);
-  return value;
-};
-
 const titleFromPrompt = (prompt: string): string => {
   const compact = prompt.replace(/\s+/g, " ").trim();
   return compact.length > 42 ? `${compact.slice(0, 42)}…` : compact;
@@ -300,6 +293,10 @@ function App() {
   useEffect(() => {
     localStorage.setItem("neurondeck-speech-mode", speechMode);
   }, [speechMode]);
+
+  useEffect(() => {
+    recordAnonymousVisit();
+  }, []);
 
   useEffect(() => {
     stopSpeechPlayback();

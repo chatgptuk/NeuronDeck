@@ -14,9 +14,10 @@
     <main>
       <header><a href="/">← 返回 NeuronDeck</a><h1>隐私说明</h1><p>NeuronDeck 只收集运行对话和 Cloudflare 授权所必需的数据。</p><span class="date">更新于 2026 年 8 月 29 日</span></header>
       <section><h2>本地对话与临时续传</h2><p>长期对话历史与偏好默认保存在你的浏览器本地。你主动发送的消息、文件或图片会上传给服务端处理；生成期间的流式事件会在独立的 Cloudflare Durable Object 中临时保留最多 24 小时，用于刷新、切后台或短暂断线后的续传，之后自动删除。</p></section>
+      <section><h2>匿名运行统计</h2><p>为了了解站点是否有人使用及各功能的运行情况，浏览器会生成一个随机标识。服务端只保存该标识的 SHA-256 哈希、首次与最近活跃时间，以及页面访问、聊天、生图、语音和生成错误的聚合数量。统计不包含消息内容、IP 地址、文件名、生成图片、Cloudflare Token 或其他账户凭证；清除浏览器站点数据后会被视为新的浏览器。</p></section>
       <section><h2>Cloudflare 授权</h2><p>连接 Cloudflare 时，我们使用 OAuth 2.0 Authorization Code 与 PKCE。访问令牌和刷新令牌经 AES-GCM 加密后保存在 Cloudflare KV，并通过仅限 HTTP、Secure、SameSite=Lax 的会话 Cookie 关联；令牌不会写入浏览器存储。</p><p>应用只申请 Account Settings Read、Workers AI Read 与 offline_access，用于列出你授权的账户、调用 Workers AI 以及安全续期。你可以随时在设置中撤销授权。</p></section>
       <section><h2>AI 请求与生成内容</h2><p>你发送的内容会交给所选 Cloudflare Workers AI 模型处理。连接个人账户后，请求计入该账户的额度；未连接时使用本站额度。长时生图任务的结果可能存放在受访问令牌保护的 Cloudflare R2 中，以便任务完成后交付。</p></section>
-      <section><h2>第三方与安全</h2><p>服务由 Cloudflare Workers、Workers AI、KV、R2 与 Workflows 提供。我们不出售个人信息，也不会读取你的 Cloudflare 密码、MFA 信息或 API 密钥。</p></section>
+      <section><h2>第三方与安全</h2><p>服务由 Cloudflare Workers、Workers AI、D1、KV、R2 与 Workflows 提供。我们不出售个人信息，也不会读取你的 Cloudflare 密码、MFA 信息或 API 密钥。</p></section>
       <section><h2>联系</h2><p>如需删除授权会话或咨询隐私问题，请通过 <a href="https://chatgpt.org.uk">chatgpt.org.uk</a> 联系站点运营者。</p></section>
     </main>
   </body>

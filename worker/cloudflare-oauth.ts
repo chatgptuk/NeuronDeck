@@ -161,6 +161,8 @@ const isSameOrigin = (request: Request): boolean => {
   }
 };
 
+const safeReturnTo = (value: string | null): string => value === "/admin" ? "/admin" : "/";
+
 const saveSession = async (
   env: CloudflareOAuthEnv,
   sessionId: string,
@@ -293,7 +295,7 @@ const startAuthorization = async (request: Request, env: CloudflareOAuthEnv): Pr
   const challenge = bytesToBase64Url(new Uint8Array(digest));
   await env.AUTH_SESSIONS!.put(
     `oauth-state:${state}`,
-    JSON.stringify({ verifier }),
+    JSON.stringify({ verifier, returnTo: safeReturnTo(new URL(request.url).searchParams.get("returnTo")) }),
     { expirationTtl: STATE_TTL_SECONDS },
   );
 
@@ -320,7 +322,7 @@ const finishAuthorization = async (request: Request, env: CloudflareOAuthEnv): P
   const state = url.searchParams.get("state") ?? "";
   const expectedState = getCookie(request, STATE_COOKIE) ?? "";
   const error = url.searchParams.get("error");
-  const appRedirect = new URL("/", url.origin);
+  let appRedirect = new URL("/", url.origin);
   if (error) {
     appRedirect.searchParams.set("cloudflare", "denied");
     return Response.redirect(appRedirect.toString(), 302);
@@ -329,13 +331,20 @@ const finishAuthorization = async (request: Request, env: CloudflareOAuthEnv): P
     return errorResponse("Invalid Cloudflare OAuth callback state.", 400, "oauth_state_invalid");
   }
   const stateKey = `oauth-state:${state}`;
-  const transaction = await env.AUTH_SESSIONS!.get(stateKey, "json") as { verifier?: unknown } | null;
+  const transaction = await env.AUTH_SESSIONS!.get(stateKey, "json") as {
+    verifier?: unknown;
+    returnTo?: unknown;
+  } | null;
   await env.AUTH_SESSIONS!.delete(stateKey);
   if (!transaction || typeof transaction.verifier !== "string") {
     return errorResponse("Cloudflare OAuth request expired. Try again.", 400, "oauth_state_expired");
   }
 
   try {
+    appRedirect = new URL(
+      typeof transaction.returnTo === "string" ? safeReturnTo(transaction.returnTo) : "/",
+      url.origin,
+    );
     const result = await tokenRequest(env, {
       grant_type: "authorization_code",
       code,

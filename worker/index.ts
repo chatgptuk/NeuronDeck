@@ -4,8 +4,12 @@ import {
   getOAuthSession,
   getOAuthSessionById,
   handleOAuthRoute,
-  type CloudflareOAuthEnv,
 } from "./cloudflare-oauth";
+import {
+  handleAdminStatsRoute,
+  recordAnalyticsEvent,
+  type AdminStatsEnv,
+} from "./admin-stats";
 import catalog from "../src/data/models.generated.json";
 import { buildAiMessages, parseApiMessages } from "../src/lib/chat-input";
 import {
@@ -39,7 +43,7 @@ interface RateLimiter {
   limit(options: { key: string }): Promise<{ success: boolean }>;
 }
 
-interface Env extends CloudflareOAuthEnv {
+interface Env extends AdminStatsEnv {
   AI: unknown;
   ASSETS: Fetcher;
   CHAT_SESSIONS?: DurableObjectNamespace;
@@ -1592,11 +1596,13 @@ const handleToolChat = (
             image = await generateImage(ai, imageModel.id, prompt, aspectRatio, operation, references);
           }
           imageInvocationSucceeded = true;
+          await recordAnalyticsEvent(env, getClientId(request), "image");
           send({ generated_image: image });
           return `Image generated successfully with ${image.modelName} at ${image.width}x${image.height} (seed ${image.seed}). ` +
             "The image is already visible to the user. Briefly confirm completion without embedding image data.";
         } catch (error) {
           imageInvocationFailed = true;
+          await recordAnalyticsEvent(env, getClientId(request), "error");
           console.error("Workers AI image generation failed", {
             model: imageModel.id,
             message: error instanceof Error ? error.message : "Unknown image generation error",
@@ -1763,8 +1769,10 @@ const handleTts = async (request: Request, env: Env): Promise<Response> => {
         await new Promise((resolve) => setTimeout(resolve, 160 * (attempt + 1)));
       }
     }
+    await recordAnalyticsEvent(env, getClientId(request), "tts");
     return normalizeAudioResponse(result, model, language);
   } catch (error) {
+    await recordAnalyticsEvent(env, getClientId(request), "error");
     const message = error instanceof Error ? error.message : "Workers AI speech generation failed.";
     console.error("Workers AI speech generation failed", { model, language, message });
     return apiError(
@@ -2005,6 +2013,7 @@ export class ChatSession {
     const meta = await this.getMeta();
     if (!meta || meta.status !== "running") return;
     await this.putMeta({ ...meta, status, updatedAt: Date.now() });
+    if (status === "error") await recordAnalyticsEvent(this.env, meta.clientId, "error");
     this.closeSubscribers();
   }
 
@@ -2173,7 +2182,7 @@ export class ChatSession {
 const chatSessionRoute = /^\/api\/chat\/sessions\/([0-9a-f-]{36})(?:\/(events|cancel))?$/;
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, context?: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
     if (request.method === "OPTIONS" && url.pathname.startsWith("/api/")) {
@@ -2190,12 +2199,24 @@ export default {
     const oauthResponse = await handleOAuthRoute(request, env);
     if (oauthResponse) return oauthResponse;
 
+    if (request.method === "POST" && url.pathname === "/api/metrics/visit") {
+      if (!isSameOrigin(request)) return apiError("Cross-origin analytics are not allowed.", 403, "origin_rejected");
+      const clientId = getClientId(request);
+      if (clientId !== "anonymous") context?.waitUntil(recordAnalyticsEvent(env, clientId, "visit"));
+      return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/admin/stats") {
+      return handleAdminStatsRoute(request, env);
+    }
+
     if (request.method === "GET" && url.pathname === "/api/health") {
       return json({
         ok: true,
         service: "neurondeck",
         imageDelivery: durableImageJobsAvailable(env) ? "durable" : "direct",
         chatRecovery: env.CHAT_SESSIONS ? "durable" : "direct",
+        adminDashboard: Boolean(env.METRICS_DB && env.ADMIN_ACCOUNT_ID),
         modelCount: catalog.models.length,
         imageModelCount: IMAGE_MODELS.length,
         ttsModelCount: Object.keys(TTS_MODEL_IDS).length,
@@ -2225,11 +2246,15 @@ export default {
       if (!env.CHAT_SESSIONS) {
         return apiError("Resumable chat sessions are not enabled for this deployment.", 503, "chat_sessions_disabled");
       }
+      if (request.method === "POST" && !chatSessionMatch[2]) {
+        context?.waitUntil(recordAnalyticsEvent(env, getClientId(request), "chat"));
+      }
       const objectId = env.CHAT_SESSIONS.idFromName(chatSessionMatch[1]);
       return env.CHAT_SESSIONS.get(objectId).fetch(request);
     }
 
     if (request.method === "POST" && url.pathname === "/api/chat") {
+      context?.waitUntil(recordAnalyticsEvent(env, getClientId(request), "chat"));
       return handleChat(request, env);
     }
 

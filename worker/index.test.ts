@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import worker, { ChatSession } from "./index";
+import { hasAdminAccount } from "./admin-stats";
 
 const pixel = "data:image/png;base64,iVBORw0KGgo=";
 const chatModel = "@cf/zai-org/glm-4.7-flash";
@@ -80,7 +81,7 @@ describe("Cloudflare OAuth routes", () => {
 
   it("starts a PKCE authorization without exposing a client secret", async () => {
     const { env } = createEnv();
-    const put = vi.fn(async () => undefined);
+    const put = vi.fn(async (_key: string, _value: string) => undefined);
     const oauthEnv = {
       ...env,
       AUTH_SESSIONS: { put, get: vi.fn(), delete: vi.fn() },
@@ -89,7 +90,7 @@ describe("Cloudflare OAuth routes", () => {
       OAUTH_SESSION_SECRET: btoa("0123456789abcdef0123456789abcdef"),
     };
     const response = await worker.fetch(
-      new Request("https://ai.chatgpt.org.uk/api/auth/cloudflare/start"),
+      new Request("https://ai.chatgpt.org.uk/api/auth/cloudflare/start?returnTo=/admin"),
       oauthEnv as never,
     );
     const location = new URL(response.headers.get("location")!);
@@ -103,6 +104,83 @@ describe("Cloudflare OAuth routes", () => {
     expect(location.searchParams.get("scope")).toBe("ai.read account-settings.read offline_access");
     expect(response.headers.get("set-cookie")).toContain("HttpOnly");
     expect(put).toHaveBeenCalledOnce();
+    expect(JSON.parse(String(put.mock.calls[0][1]))).toMatchObject({ returnTo: "/admin" });
+  });
+});
+
+describe("private admin metrics", () => {
+  it("matches only explicitly configured Cloudflare account ids", () => {
+    const owner = "a".repeat(32);
+    expect(hasAdminAccount([{ id: owner }], owner)).toBe(true);
+    expect(hasAdminAccount([{ id: "b".repeat(32) }], owner)).toBe(false);
+    expect(hasAdminAccount([{ id: owner }], undefined)).toBe(false);
+  });
+
+  it("keeps the dashboard unavailable until an administrator id is configured", async () => {
+    const { env } = createEnv();
+    const response = await worker.fetch(
+      new Request("https://ai.chatgpt.org.uk/api/admin/stats"),
+      env as never,
+    );
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ error: { code: "admin_unavailable" } });
+  });
+
+  it("requires Cloudflare sign-in before forwarding private statistics", async () => {
+    const { env } = createEnv();
+    const response = await worker.fetch(
+      new Request("https://ai.chatgpt.org.uk/api/admin/stats"),
+      {
+        ...env,
+        ADMIN_ACCOUNT_ID: "a".repeat(32),
+        METRICS_DB: {},
+      } as never,
+    );
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({ error: { code: "admin_login_required" } });
+  });
+
+  it("records an anonymous browser visit without exposing it in the response", async () => {
+    const prepared: Array<{ query: string; bindings: unknown[] }> = [];
+    const prepare = vi.fn((query: string) => {
+      const statement = {
+        query,
+        bindings: [] as unknown[],
+        bind: (...bindings: unknown[]) => {
+          statement.bindings = bindings;
+          return statement;
+        },
+      };
+      prepared.push(statement);
+      return statement;
+    });
+    const batch = vi.fn(async () => []);
+    const waitUntil = vi.fn((promise: Promise<unknown>) => promise);
+    const { env } = createEnv();
+    const response = await worker.fetch(
+      new Request("https://ai.chatgpt.org.uk/api/metrics/visit", {
+        method: "POST",
+        headers: {
+          origin: "https://ai.chatgpt.org.uk",
+          "x-neurondeck-client": "browser-client-1234",
+        },
+      }),
+      {
+        ...env,
+        METRICS_DB: { prepare, batch },
+      } as never,
+      { waitUntil } as never,
+    );
+    await waitUntil.mock.calls[0][0];
+
+    expect(response.status).toBe(204);
+    expect(waitUntil).toHaveBeenCalledOnce();
+    expect(batch).toHaveBeenCalledTimes(2);
+    expect(prepared).toHaveLength(7);
+    expect(prepared[4].bindings[0]).toMatch(/^[a-f0-9]{64}$/);
+    expect(prepared[4].bindings[0]).not.toBe("browser-client-1234");
   });
 });
 

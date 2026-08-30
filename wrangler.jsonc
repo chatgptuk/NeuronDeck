@@ -26,6 +26,11 @@
       "new_sqlite_classes": ["ChatSession"]
     }
   ],
+  "d1_databases": [
+    {
+      "binding": "METRICS_DB"
+    }
+  ],
   "kv_namespaces": [
     {
       "binding": "AUTH_SESSIONS"
