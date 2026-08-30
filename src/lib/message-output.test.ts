@@ -20,5 +20,10 @@ describe("message output visibility", () => {
         height: 1024,
       }],
     })).toBe(true);
+    expect(hasRenderableMessageOutput({
+      content: "",
+      generatedImages: [],
+      webSources: [{ title: "Docs", url: "https://example.com/", domain: "example.com" }],
+    })).toBe(true);
   });
 });

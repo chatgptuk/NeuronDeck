@@ -14,6 +14,10 @@ const publicPoolAccounts = [
   { accountId: "2".repeat(32), apiToken: "b".repeat(40) },
 ];
 const oauthSecret = btoa("0123456789abcdef0123456789abcdef");
+const hasToolResult = (input: Record<string, unknown>): boolean =>
+  Array.isArray(input.messages) && input.messages.some((message) =>
+    message && typeof message === "object" && (message as { role?: unknown }).role === "tool",
+  );
 
 const bytesToBase64Url = (bytes: Uint8Array): string => {
   let binary = "";
@@ -551,6 +555,11 @@ describe("public Cloudflare AI account pool", () => {
       if (callNumber === 2) {
         return Response.json({ success: false, errors: [{ message: "capacity limit" }] }, { status: 429 });
       }
+      if (callNumber === 4) {
+        return new Response('data: {"response":"图片已生成。"}\n\ndata: [DONE]\n\n', {
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
       return new Response(Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]), {
         headers: { "content-type": "image/png" },
       });
@@ -579,7 +588,7 @@ describe("public Cloudflare AI account pool", () => {
 
     expect(response.status).toBe(200);
     expect(run).not.toHaveBeenCalled();
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(multipartBodies).toHaveLength(2);
     expect([...multipartBodies[1]]).toEqual([...multipartBodies[0]]);
     expect(body).toContain('"generated_image"');
@@ -800,12 +809,76 @@ describe("chat streaming", () => {
 });
 
 describe("image generation function calling", () => {
+  it("executes multiple image tool calls and returns their results to a final model round", async () => {
+    const calls: Array<{ model: string; input: Record<string, unknown> }> = [];
+    const ai = {
+      run: vi.fn(async (model: string, input: Record<string, unknown>) => {
+        calls.push({ model, input });
+        if (model === imageModel) return { image: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB" };
+        if (!hasToolResult(input)) {
+          return {
+            choices: [{ message: { tool_calls: [
+              {
+                id: "image-one",
+                type: "function",
+                function: {
+                  name: "generate_image",
+                  arguments: JSON.stringify({ prompt: "A sunrise above the sea", operation: "generate" }),
+                },
+              },
+              {
+                id: "image-two",
+                type: "function",
+                function: {
+                  name: "generate_image",
+                  arguments: JSON.stringify({ prompt: "A moonlit forest", operation: "generate" }),
+                },
+              },
+            ] } }],
+          };
+        }
+        return new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('data: {"response":"两张图片都生成好了。"}\n\ndata: [DONE]\n\n'));
+            controller.close();
+          },
+        });
+      }),
+      toMarkdown: vi.fn(),
+    };
+    const response = await worker.fetch(new Request("https://ai.chatgpt.org.uk/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "accept-language": "zh-CN",
+        "x-neurondeck-client": "test-client-1234",
+      },
+      body: JSON.stringify({
+        model: chatModel,
+        imageModel,
+        messages: [{ role: "user", content: "一次生成两张图，一张日出，一张月夜森林" }],
+      }),
+    }), {
+      AI: ai,
+      ASSETS: { fetch: vi.fn() },
+      CHAT_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+    } as never);
+    const body = await response.text();
+    const finalRoundMessages = calls[3].input.messages as Array<{ role?: string; content?: string }>;
+
+    expect(calls.map((call) => call.model)).toEqual([chatModel, imageModel, imageModel, chatModel]);
+    expect((body.match(/"generated_image"/g) ?? [])).toHaveLength(2);
+    expect(finalRoundMessages.filter((message) => message.role === "tool")).toHaveLength(2);
+    expect(finalRoundMessages.filter((message) => message.role === "tool").every((message) => message.content?.includes('"ok":true'))).toBe(true);
+    expect(body).toContain("两张图片都生成好了");
+  });
+
   it("uses the real previous image pixels for edit requests and transparently selects FLUX.2 Dev", async () => {
     const devModel = "@cf/black-forest-labs/flux-2-dev";
     const imageCalls: Array<Record<string, unknown>> = [];
     const ai = {
       run: vi.fn(async (model: string, input: Record<string, unknown>) => {
-        if (model === chatModel) {
+        if (model === chatModel && !hasToolResult(input)) {
           return {
             choices: [{ message: { tool_calls: [{
               id: "edit-image-call",
@@ -822,6 +895,7 @@ describe("image generation function calling", () => {
             }] } }],
           };
         }
+        if (model === chatModel) return { response: "图片编辑完成。" };
         imageCalls.push(input);
         return { image: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB" };
       }),
@@ -865,7 +939,7 @@ describe("image generation function calling", () => {
     } as never);
     const body = await response.text();
 
-    expect(ai.run.mock.calls.map((call) => call[0])).toEqual([chatModel, devModel]);
+    expect(ai.run.mock.calls.map((call) => call[0])).toEqual([chatModel, devModel, chatModel]);
     expect(imageCalls).toHaveLength(1);
     const multipart = imageCalls[0].multipart as { body: ReadableStream; contentType: string };
     expect(multipart.contentType).toContain("multipart/form-data");
@@ -925,6 +999,12 @@ describe("image generation function calling", () => {
       run: vi.fn(async (model: string, input: Record<string, unknown>) => {
         calls.push({ model, input });
         if (model === imageModel) return { image: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB" };
+        if (hasToolResult(input)) return new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('data: {"response":"温室图片已经生成。"}\n\ndata: [DONE]\n\n'));
+            controller.close();
+          },
+        });
         return new ReadableStream({
           start(controller) {
             controller.enqueue(new TextEncoder().encode(
@@ -964,7 +1044,7 @@ describe("image generation function calling", () => {
     const body = await response.text();
 
     expect(response.headers.get("content-type")).toContain("text/event-stream");
-    expect(calls.map((call) => call.model)).toEqual([chatModel, imageModel]);
+    expect(calls.map((call) => call.model)).toEqual([chatModel, imageModel, chatModel]);
     expect(calls[0].input.tools).toBeTruthy();
     expect(calls[0].input.stream).toBe(true);
     expect(JSON.stringify(calls[0].input.tools)).toContain("semantic intent");
@@ -981,7 +1061,7 @@ describe("image generation function calling", () => {
     const devModel = "@cf/black-forest-labs/flux-2-dev";
     const ai = {
       run: vi.fn(async (_model: string, input: Record<string, unknown>) => {
-        if (input.tools) {
+        if (input.tools && !hasToolResult(input)) {
           return {
             choices: [{
               message: {
@@ -1047,7 +1127,7 @@ describe("image generation function calling", () => {
     const body = await response.text();
 
     expect(create).toHaveBeenCalledOnce();
-    expect(ai.run.mock.calls.map((call) => call[0])).toEqual([chatModel]);
+    expect(ai.run.mock.calls.map((call) => call[0])).toEqual([chatModel, chatModel]);
     expect(body).toContain('"jobId"');
     expect(body).toContain('"modelId":"@cf/black-forest-labs/flux-2-dev"');
     expect(body).toMatch(/"dataUrl":"\/api\/image-jobs\/[0-9a-f-]+\/image\.png\?token=[a-f0-9]+"/);
@@ -1058,7 +1138,7 @@ describe("image generation function calling", () => {
     const devModel = "@cf/black-forest-labs/flux-2-dev";
     const ai = {
       run: vi.fn(async (model: string, input: Record<string, unknown>) => {
-        if (input.tools) {
+        if (input.tools && !hasToolResult(input)) {
           return {
             choices: [{
               message: {
@@ -1103,7 +1183,7 @@ describe("image generation function calling", () => {
     } as never);
     const body = await response.text();
 
-    expect(ai.run.mock.calls.map((call) => call[0])).toEqual([chatModel, devModel]);
+    expect(ai.run.mock.calls.map((call) => call[0])).toEqual([chatModel, devModel, chatModel]);
     expect(body).toContain('"dataUrl":"data:image/png;base64,iVBOR');
     expect(body).not.toContain('"jobId"');
     expect(body).toContain('"done":true');
@@ -1113,7 +1193,7 @@ describe("image generation function calling", () => {
     const devModel = "@cf/black-forest-labs/flux-2-dev";
     const ai = {
       run: vi.fn(async (model: string, input: Record<string, unknown>) => {
-        if (input.tools) {
+        if (input.tools && !hasToolResult(input)) {
           return {
             choices: [{
               message: {
@@ -1168,7 +1248,7 @@ describe("image generation function calling", () => {
     const body = await response.text();
 
     expect(create).toHaveBeenCalledOnce();
-    expect(ai.run.mock.calls.map((call) => call[0])).toEqual([chatModel, devModel]);
+    expect(ai.run.mock.calls.map((call) => call[0])).toEqual([chatModel, devModel, chatModel]);
     expect(body).toContain('"dataUrl":"data:image/png;base64,iVBOR');
     expect(body).toContain('"done":true');
   });
@@ -1253,7 +1333,7 @@ describe("image generation function calling", () => {
     expect(JSON.stringify(workflowParams)).not.toContain(publicAccount.apiToken);
     expect(body).not.toContain(publicAccount.accountId);
     expect(body).not.toContain(publicAccount.apiToken);
-    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("rejects image model ids outside the curated Cloudflare-hosted list", async () => {
@@ -1283,7 +1363,7 @@ describe("image generation function calling", () => {
       run: vi.fn(async (model: string, input: Record<string, unknown>) => {
         calls.push({ model, input });
         if (model === imageModel) return { image: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB" };
-        if (input.tool_choice === "auto") {
+        if (input.tool_choice === "auto" && !hasToolResult(input)) {
           return {
             choices: [{
               message: {
@@ -1339,7 +1419,7 @@ describe("image generation function calling", () => {
     const response = await worker.fetch(request, env as never);
     const body = await response.text();
 
-    expect(calls.map((call) => call.model)).toEqual([chatModel, imageModel]);
+    expect(calls.map((call) => call.model)).toEqual([chatModel, imageModel, chatModel]);
     expect(calls[0].input.tool_choice).toBe("auto");
     expect(JSON.stringify(calls[0].input.messages)).toContain("referential follow-up");
     expect(body).toContain('"status":"generating"');
@@ -1352,7 +1432,7 @@ describe("image generation function calling", () => {
       run: vi.fn(async (model: string, input: Record<string, unknown>) => {
         calls.push({ model, input });
         if (model === imageModel) return { image: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB" };
-        if (input.tool_choice === "auto") {
+        if (input.tool_choice === "auto" && !hasToolResult(input)) {
           return {
             choices: [{
               message: {
@@ -1415,7 +1495,7 @@ describe("image generation function calling", () => {
     const response = await worker.fetch(request, env as never);
     const body = await response.text();
 
-    expect(calls.map((call) => call.model)).toEqual([chatModel, imageModel]);
+    expect(calls.map((call) => call.model)).toEqual([chatModel, imageModel, chatModel]);
     expect(calls[0].input.tool_choice).toBe("auto");
     expect(JSON.stringify(calls[0].input.messages)).toContain("An adorable fluffy orange cat");
     expect(body).toContain('"generated_image"');
@@ -1429,7 +1509,7 @@ describe("image generation function calling", () => {
       run: vi.fn(async (model: string, input: Record<string, unknown>) => {
         calls.push({ model, input });
         if (model === imageModel) return { image: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB" };
-        if (input.tool_choice === "auto") {
+        if (input.tool_choice === "auto" && !hasToolResult(input)) {
           return {
             choices: [{
               message: {
@@ -1492,7 +1572,7 @@ describe("image generation function calling", () => {
     const response = await worker.fetch(request, env as never);
     const body = await response.text();
 
-    expect(calls.map((call) => call.model)).toEqual([glm53Model, imageModel]);
+    expect(calls.map((call) => call.model)).toEqual([glm53Model, imageModel, glm53Model]);
     expect(calls[0].input.tool_choice).toBe("auto");
     expect(JSON.stringify(calls[0].input.messages)).toContain("An adorable fluffy cat in warm sunlight");
     expect(body).toContain('"status":"generating"');
@@ -1598,6 +1678,86 @@ describe("image generation function calling", () => {
     expect(calls[0].input.stream).toBe(true);
     expect(body).not.toContain('"generated_image"');
     expect(body).toContain("I will make that image.");
+  });
+});
+
+describe("Browser Run function calling", () => {
+  it("uses the PUBLIC_AI_ACCOUNTS token for search and webpage reads across multiple model rounds", async () => {
+    const publicAccount = publicPoolAccounts[0];
+    const browserRequests: Array<{ url: string; authorization: string | null; body: Record<string, unknown> }> = [];
+    let modelRound = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/browser-rendering/markdown")) {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        browserRequests.push({
+          url,
+          authorization: new Headers(init?.headers).get("authorization"),
+          body,
+        });
+        const target = String(body.url);
+        return Response.json({
+          success: true,
+          result: target.includes("duckduckgo.com")
+            ? "[Cloudflare Browser Run docs](https://developers.cloudflare.com/browser-run/)"
+            : "# Browser Run documentation\n\nBrowser Run provides stateless Quick Actions for webpages.",
+        }, { headers: { "x-browser-ms-used": "25" } });
+      }
+
+      modelRound += 1;
+      if (modelRound === 1) {
+        return Response.json({ success: true, result: { choices: [{ message: { tool_calls: [{
+          id: "search-call",
+          type: "function",
+          function: { name: "search_web", arguments: JSON.stringify({ query: "Cloudflare Browser Run Quick Actions" }) },
+        }] } }] } });
+      }
+      if (modelRound === 2) {
+        return Response.json({ success: true, result: { choices: [{ message: { tool_calls: [{
+          id: "open-call",
+          type: "function",
+          function: { name: "open_webpage", arguments: JSON.stringify({ url: "https://developers.cloudflare.com/browser-run/" }) },
+        }] } }] } });
+      }
+      return new Response(
+        'data: {"response":"Browser Run 提供无状态 Quick Actions。[来源](https://developers.cloudflare.com/browser-run/)"}\n\ndata: [DONE]\n\n',
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const ownerRun = vi.fn();
+    const response = await worker.fetch(new Request("https://ai.chatgpt.org.uk/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "accept-language": "zh-CN",
+        "x-neurondeck-client": "browser-run-client",
+      },
+      body: JSON.stringify({
+        model: chatModel,
+        messages: [{ role: "user", content: "搜索并打开 Cloudflare Browser Run 文档，然后解释 Quick Actions" }],
+      }),
+    }), {
+      AI: { run: ownerRun, toMarkdown: vi.fn() },
+      ASSETS: { fetch: vi.fn() },
+      CHAT_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+      PUBLIC_AI_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+      PUBLIC_AI_ACCOUNTS: JSON.stringify({ accounts: [publicAccount] }),
+    } as never);
+    const body = await response.text();
+
+    expect(ownerRun).not.toHaveBeenCalled();
+    expect(modelRound).toBe(3);
+    expect(browserRequests).toHaveLength(2);
+    expect(browserRequests.every((item) => item.url.includes(`/accounts/${publicAccount.accountId}/`))).toBe(true);
+    expect(browserRequests.every((item) => item.authorization === `Bearer ${publicAccount.apiToken}`)).toBe(true);
+    expect(browserRequests[0].body.url).toContain("html.duckduckgo.com");
+    expect(browserRequests[1].body.url).toBe("https://developers.cloudflare.com/browser-run/");
+    expect(body).toContain('"status":"searching"');
+    expect(body).toContain('"status":"reading"');
+    expect(body).toContain('"source"');
+    expect(body).toContain("无状态 Quick Actions");
+    expect(body).not.toContain(publicAccount.apiToken);
   });
 });
 

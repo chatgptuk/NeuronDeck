@@ -1,4 +1,4 @@
-import type { GeneratedImage, ImageGenerationState, StreamEvent } from "../types";
+import type { GeneratedImage, ImageGenerationState, StreamEvent, WebResearchState } from "../types";
 
 export class StreamInterruptedError extends Error {
   constructor() {
@@ -17,6 +17,9 @@ const getNestedContent = (value: unknown): StreamEvent => {
   }
   if (data.image_generation && typeof data.image_generation === "object") {
     return { imageGeneration: data.image_generation as ImageGenerationState };
+  }
+  if (data.web_research && typeof data.web_research === "object") {
+    return { webResearch: data.web_research as WebResearchState };
   }
   if (typeof data.response === "string") return { content: data.response };
   if (typeof data.content === "string") return { content: data.content };

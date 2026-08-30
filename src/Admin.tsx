@@ -30,7 +30,7 @@ interface DailyStats {
   errors: number;
 }
 
-type AiFeature = "chat" | "image" | "tts";
+type AiFeature = "chat" | "image" | "tts" | "browser";
 
 interface ModelHealthRow {
   feature: AiFeature;
@@ -100,6 +100,7 @@ const copy = {
     chat: "聊天",
     image: "生图",
     tts: "语音",
+    browser: "网页",
     noModelData: "新计量会从本次升级后开始累计，完成几次生成后即可看到模型健康数据。",
     costHint: "成本仅按模型目录中的公开输入、缓存输入与输出 Token 单价估算；图片、语音及 Cloudflare 最终账单以控制台为准。",
     trafficTitle: "匿名访问与功能用量",
@@ -161,6 +162,7 @@ const copy = {
     chat: "Chat",
     image: "Image",
     tts: "Speech",
+    browser: "Web",
     noModelData: "The new metrics begin accumulating with this release. Complete a few generations to populate model health.",
     costHint: "Costs use published input, cached-input, and output token prices in the model catalog. Image, speech, and the final Cloudflare bill remain authoritative in the dashboard.",
     trafficTitle: "Anonymous traffic & feature usage",
@@ -200,6 +202,7 @@ const modelNames = new Map<string, string>([
   ...IMAGE_MODELS.map((model) => [model.id, model.name] as [string, string]),
   [TTS_MODEL_IDS.auraEnglish, "Aura-2 English"],
   [TTS_MODEL_IDS.auraSpanish, "Aura-2 Spanish"],
+  ["browser-run/markdown", "Cloudflare Browser Run"],
 ]);
 
 const formatNumber = (value: number, language: Language): string =>
@@ -342,7 +345,7 @@ export function Admin() {
                   <tbody>
                     {rows.length ? rows.map((row) => {
                       const health = healthLabel(row);
-                      const feature = row.feature === "chat" ? t.chat : row.feature === "image" ? t.image : t.tts;
+                      const feature = row.feature === "chat" ? t.chat : row.feature === "image" ? t.image : row.feature === "browser" ? t.browser : t.tts;
                       return (
                         <tr key={`${row.feature}:${row.modelId}`}>
                           <td><strong className="admin-model-name">{modelNames.get(row.modelId) ?? row.modelId.split("/").at(-1)}</strong><small className="admin-model-id">{row.modelId}</small></td>

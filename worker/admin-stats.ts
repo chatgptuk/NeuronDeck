@@ -5,7 +5,7 @@ import catalog from "../src/data/models.generated.json";
 export { hasAdminAccount } from "./admin-access";
 
 export type AnalyticsEvent = "visit" | "chat" | "image" | "tts" | "error";
-export type AiFeature = "chat" | "image" | "tts";
+export type AiFeature = "chat" | "image" | "tts" | "browser";
 
 export interface ModelTelemetry {
   feature: AiFeature;
@@ -174,7 +174,7 @@ export const recordModelTelemetry = async (
   telemetry: ModelTelemetry,
 ): Promise<void> => {
   const database = env.METRICS_DB;
-  if (!database || !/^@cf\/[a-z0-9._/-]{3,180}$/i.test(telemetry.modelId)) return;
+  if (!database || (!/^@cf\/[a-z0-9._/-]{3,180}$/i.test(telemetry.modelId) && telemetry.modelId !== "browser-run/markdown")) return;
 
   try {
     await ensureSchema(database);

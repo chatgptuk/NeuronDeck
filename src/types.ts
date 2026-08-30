@@ -58,6 +58,20 @@ export interface ImageGenerationState {
   sourceImageIds?: string[];
 }
 
+export interface WebSource {
+  title: string;
+  url: string;
+  domain: string;
+}
+
+export interface WebResearchState {
+  status: "searching" | "reading" | "complete" | "error";
+  query?: string;
+  url?: string;
+  message?: string;
+  source?: WebSource;
+}
+
 export interface ChatMessage {
   id: string;
   role: MessageRole;
@@ -70,6 +84,8 @@ export interface ChatMessage {
   attachments?: Attachment[];
   generatedImages?: GeneratedImage[];
   imageGeneration?: ImageGenerationState;
+  webResearch?: WebResearchState;
+  webSources?: WebSource[];
   generationSessionId?: string;
   streamCursor?: number;
   recoveryState?: "connecting" | "recovering";
@@ -103,6 +119,7 @@ export interface StreamEvent {
   error?: string;
   generatedImage?: GeneratedImage;
   imageGeneration?: ImageGenerationState;
+  webResearch?: WebResearchState;
   cursor?: number;
   cancelled?: boolean;
 }

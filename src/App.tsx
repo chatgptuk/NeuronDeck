@@ -106,9 +106,10 @@ import {
   selectCloudflareAccount,
   type CloudflareAuthStatus,
 } from "./lib/cloudflare-auth";
-import type { Attachment, ChatMessage, Conversation, GeneratedImage, ModelInfo, WorkspaceState } from "./types";
+import type { Attachment, ChatMessage, Conversation, GeneratedImage, ModelInfo, WebResearchState, WebSource, WorkspaceState } from "./types";
 import { AttachmentStrip } from "./components/AttachmentStrip";
 import { GeneratedImageGallery } from "./components/GeneratedImageGallery";
+import { WebResearchPanel } from "./components/WebResearchPanel";
 import { ModelPicker } from "./components/ModelPicker";
 import {
   ChatGlyph,
@@ -634,6 +635,8 @@ function App() {
       let content = resumedMessage?.content ?? "";
       let reasoning = resumedMessage?.reasoning ?? "";
       let generatedImages: GeneratedImage[] = resumedMessage?.generatedImages ?? [];
+      let webResearch: WebResearchState | undefined = resumedMessage?.webResearch;
+      let webSources: WebSource[] = resumedMessage?.webSources ?? [];
       let pendingImageJobId = resumedMessage?.imageGeneration?.status === "generating"
         ? resumedMessage.imageGeneration.jobId
         : undefined;
@@ -744,12 +747,19 @@ function App() {
                   generatedImages = [...generatedImages, event.generatedImage];
                 }
               }
-              if (event.content || event.reasoning || event.generatedImage || event.imageGeneration || event.cursor != null) {
+              if (event.webResearch) {
+                webResearch = event.webResearch;
+                const source = event.webResearch.source;
+                if (source && !webSources.some((item) => item.url === source.url)) webSources = [...webSources, source];
+              }
+              if (event.content || event.reasoning || event.generatedImage || event.imageGeneration || event.webResearch || event.cursor != null) {
                 updateMessage(conversation.id, assistantId, (message) => ({
                   ...message,
                   content,
                   reasoning,
                   generatedImages,
+                  webResearch,
+                  webSources,
                   imageGeneration: event.imageGeneration ??
                     (event.generatedImage
                       ? {
@@ -800,6 +810,8 @@ function App() {
             : content || (generatedImages.length ? t.imageGeneratedFallback : t.emptyCompletion),
           reasoning,
           generatedImages,
+          webResearch,
+          webSources,
           status: "complete",
           elapsedMs: Math.max(1, Date.now() - startedAt),
           generationSessionId: sessionId,
@@ -828,6 +840,8 @@ function App() {
           content: message,
           reasoning,
           generatedImages,
+          webResearch,
+          webSources,
           status: stopped ? "complete" : "error",
           elapsedMs: Math.max(1, Date.now() - startedAt),
           generationSessionId: sessionId,
@@ -1525,6 +1539,11 @@ function App() {
                           state={message.imageGeneration}
                           language={language}
                         />
+                        <WebResearchPanel
+                          state={message.webResearch}
+                          sources={message.webSources}
+                          language={language}
+                        />
                         {message.reasoning && (
                           <details className="reasoning-block" open={message.status === "streaming"}>
                             <summary>{t.reasoningTrace}</summary>
@@ -1539,7 +1558,7 @@ function App() {
                           <Suspense fallback={<p>{message.content}</p>}>
                             <MarkdownMessage content={message.content} language={language} />
                           </Suspense>
-                        ) : message.imageGeneration || message.generatedImages?.length ? null : (
+                        ) : message.imageGeneration || message.generatedImages?.length || message.webResearch ? null : (
                           <div className="typing"><span /><span /><span /></div>
                         )}
                       </div>
