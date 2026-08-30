@@ -10,6 +10,7 @@ import catalog from "../src/data/models.generated.json";
 import { buildAiMessages, parseApiMessages } from "../src/lib/chat-input";
 import {
   INTERNAL_IMAGE_CONTEXT_MARKER,
+  type ImageReferenceRequest,
   type RetainedImageContext,
 } from "../src/lib/chat-context";
 import {
@@ -27,7 +28,7 @@ import {
   type SpeechLanguage,
   type TtsModelId,
 } from "../src/lib/speech";
-import type { GeneratedImage, ImageGenerationState } from "../src/types";
+import type { GeneratedImage, ImageGenerationState, ImageOperation } from "../src/types";
 import {
   orderPublicAiAccounts,
   readPublicAiPoolConfig,
@@ -41,6 +42,7 @@ interface RateLimiter {
 interface Env extends CloudflareOAuthEnv {
   AI: unknown;
   ASSETS: Fetcher;
+  CHAT_SESSIONS?: DurableObjectNamespace;
   CHAT_RATE_LIMITER: RateLimiter;
   IMAGE_RESULTS?: R2Bucket;
   IMAGE_WORKFLOW?: Workflow<ImageWorkflowParams>;
@@ -55,6 +57,7 @@ interface ChatBody {
   temperature?: unknown;
   maxTokens?: unknown;
   imageModel?: unknown;
+  imageReferences?: unknown;
 }
 
 interface TtsBody {
@@ -325,6 +328,15 @@ type ImageAspectRatio = "square" | "landscape" | "portrait";
 interface GenerateImageArguments {
   prompt?: unknown;
   aspect_ratio?: unknown;
+  operation?: unknown;
+  reference_image_ids?: unknown;
+}
+
+interface PreparedImageReference {
+  id: string;
+  bytes: Uint8Array;
+  mimeType: string;
+  prompt: string;
 }
 
 interface ImageWorkflowParams {
@@ -336,6 +348,9 @@ interface ImageWorkflowParams {
   oauthSessionId?: string;
   publicPoolSeed?: string;
   prompt: string;
+  operation: ImageOperation;
+  referenceObjectKeys?: string[];
+  sourceImageIds?: string[];
 }
 
 interface ImageWorkflowOutput {
@@ -350,6 +365,8 @@ interface ImageWorkflowOutput {
   objectKey: string;
   prompt: string;
   seed: number;
+  operation: ImageOperation;
+  sourceImageIds?: string[];
   width: number;
 }
 
@@ -477,6 +494,93 @@ const normalizeImageOutput = async (result: unknown): Promise<string> => {
   return `data:${mimeType};base64,${bytesToBase64(bytes)}`;
 };
 
+const MAX_IMAGE_REFERENCES = 4;
+const MAX_REFERENCE_IMAGE_BYTES = 8 * 1024 * 1024;
+const MAX_TOTAL_REFERENCE_IMAGE_BYTES = 24 * 1024 * 1024;
+const referenceDataUrlPattern = /^data:(image\/(?:jpeg|png|webp));base64,([a-zA-Z0-9+/]+={0,2})$/;
+const storedImageReferencePattern = /^\/api\/image-jobs\/([0-9a-f-]{36})\/image\.(?:png|webp|jpg)$/;
+
+const parseImageReferenceRequests = (value: unknown): ImageReferenceRequest[] => {
+  if (value == null) return [];
+  if (!Array.isArray(value) || value.length > MAX_IMAGE_REFERENCES) {
+    throw new Error("invalid_image_references");
+  }
+  return value.map((raw) => {
+    if (!raw || typeof raw !== "object") throw new Error("invalid_image_references");
+    const item = raw as Record<string, unknown>;
+    const id = typeof item.id === "string" ? item.id.trim() : "";
+    const dataUrl = typeof item.dataUrl === "string" ? item.dataUrl.trim() : "";
+    const prompt = typeof item.prompt === "string" ? item.prompt.replace(/\s+/g, " ").trim().slice(0, 1_200) : "";
+    if (!/^[a-zA-Z0-9_-]{1,80}$/.test(id) || !dataUrl || dataUrl.length > 16 * 1024 * 1024) {
+      throw new Error("invalid_image_references");
+    }
+    return { id, dataUrl, prompt };
+  });
+};
+
+const readImageReference = async (
+  request: Request,
+  env: Env,
+  reference: ImageReferenceRequest,
+): Promise<PreparedImageReference> => {
+  const inline = referenceDataUrlPattern.exec(reference.dataUrl);
+  if (inline) {
+    const bytes = base64ToBytes(inline[2]);
+    if (!bytes.length || bytes.length > MAX_REFERENCE_IMAGE_BYTES) throw new Error("reference_image_too_large");
+    return { id: reference.id, bytes, mimeType: inline[1], prompt: reference.prompt };
+  }
+
+  let url: URL;
+  try {
+    url = new URL(reference.dataUrl, request.url);
+  } catch {
+    throw new Error("invalid_image_references");
+  }
+  if (url.origin !== new URL(request.url).origin || !env.IMAGE_RESULTS) {
+    throw new Error("invalid_image_references");
+  }
+  const match = storedImageReferencePattern.exec(url.pathname);
+  const token = url.searchParams.get("token") ?? "";
+  if (!match || !/^[a-f0-9]{32}$/.test(token)) throw new Error("invalid_image_references");
+  const object = await env.IMAGE_RESULTS.get(`image-jobs/${match[1]}`);
+  if (!object || object.customMetadata?.accessToken !== token || object.customMetadata?.clientId !== getClientId(request)) {
+    throw new Error("invalid_image_references");
+  }
+  const bytes = new Uint8Array(await object.arrayBuffer());
+  if (!bytes.length || bytes.length > MAX_REFERENCE_IMAGE_BYTES) throw new Error("reference_image_too_large");
+  return {
+    id: reference.id,
+    bytes,
+    mimeType: object.httpMetadata?.contentType || "image/jpeg",
+    prompt: reference.prompt,
+  };
+};
+
+const selectImageReferences = async (
+  request: Request,
+  env: Env,
+  references: ImageReferenceRequest[],
+  operation: ImageOperation,
+  requestedIds: unknown,
+): Promise<PreparedImageReference[]> => {
+  if (operation === "generate") return [];
+  const requested = Array.isArray(requestedIds)
+    ? requestedIds.filter((value): value is string => typeof value === "string")
+    : [];
+  const selected = requested.length
+    ? references.filter((reference) => requested.includes(reference.id))
+    : operation === "multi_reference"
+      ? references
+      : references.slice(-1);
+  if (!selected.length) throw new Error("reference_image_missing");
+  const prepared = await Promise.all(selected.slice(-MAX_IMAGE_REFERENCES).map((reference) =>
+    readImageReference(request, env, reference),
+  ));
+  const totalBytes = prepared.reduce((sum, reference) => sum + reference.bytes.length, 0);
+  if (totalBytes > MAX_TOTAL_REFERENCE_IMAGE_BYTES) throw new Error("reference_image_too_large");
+  return prepared;
+};
+
 const audioBytesFromString = (value: string): Uint8Array => {
   const dataUrl = /^data:audio\/[a-zA-Z0-9.+-]+;base64,(.+)$/s.exec(value);
   const encoded = (dataUrl?.[1] ?? value).replace(/\s+/g, "");
@@ -554,29 +658,62 @@ const normalizeAudioResponse = async (result: unknown, model: TtsModelId, langua
   return audioResponse(bytes, model, language, detectAudioMime(bytes));
 };
 
+const createMultipartImageBody = (
+  fields: Record<string, string>,
+  references: readonly PreparedImageReference[],
+): { body: ReadableStream<Uint8Array>; contentType: string } => {
+  const boundary = `----neurondeck-${crypto.randomUUID()}`;
+  const encoder = new TextEncoder();
+  const chunks: Uint8Array[] = [];
+  const appendText = (value: string) => chunks.push(encoder.encode(value));
+  for (const [name, value] of Object.entries(fields)) {
+    appendText(`--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`);
+  }
+  references.slice(0, MAX_IMAGE_REFERENCES).forEach((reference, index) => {
+    appendText(
+      `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="input_image_${index}"; filename="reference-${index}.${imageExtension(reference.mimeType)}"\r\n` +
+      `Content-Type: ${reference.mimeType}\r\n\r\n`,
+    );
+    chunks.push(reference.bytes);
+    appendText("\r\n");
+  });
+  appendText(`--${boundary}--\r\n`);
+  return {
+    body: new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(chunk);
+        controller.close();
+      },
+    }),
+    contentType: `multipart/form-data; boundary=${boundary}`,
+  };
+};
+
 const buildImageInput = (
   modelId: string,
   prompt: string,
   width: number,
   height: number,
   seed: number,
+  references: readonly PreparedImageReference[] = [],
 ): Record<string, unknown> => {
   if (modelId.startsWith("@cf/black-forest-labs/flux-2-")) {
-    const formData = new FormData();
-    formData.set("prompt", prompt);
-    formData.set("width", String(width));
-    formData.set("height", String(height));
-    formData.set("seed", String(seed));
+    const fields: Record<string, string> = {
+      prompt,
+      width: String(width),
+      height: String(height),
+      seed: String(seed),
+    };
     if (modelId.endsWith("flux-2-dev")) {
-      formData.set("steps", "24");
-      formData.set("guidance", "4");
+      fields.steps = "24";
+      fields.guidance = "4";
     }
-    const multipartResponse = new Response(formData);
-    if (!multipartResponse.body) throw new Error("Could not create the image request.");
+    const multipart = createMultipartImageBody(fields, references);
     return {
       multipart: {
-        body: multipartResponse.body,
-        contentType: multipartResponse.headers.get("content-type") || "multipart/form-data",
+        body: multipart.body,
+        contentType: multipart.contentType,
       },
     };
   }
@@ -592,12 +729,14 @@ const generateImage = async (
   modelId: string,
   prompt: string,
   aspectRatio: ImageAspectRatio,
+  operation: ImageOperation = "generate",
+  references: readonly PreparedImageReference[] = [],
 ): Promise<GeneratedImage> => {
   const model = getImageModel(modelId);
   const { width, height } = imageDimensions[aspectRatio];
   const seed = Math.floor(Math.random() * 2_147_483_647);
   const startedAt = performance.now();
-  const result = await ai.run(model.id, buildImageInput(model.id, prompt, width, height, seed));
+  const result = await ai.run(model.id, buildImageInput(model.id, prompt, width, height, seed, references));
   const dataUrl = await normalizeImageOutput(result);
   return {
     id: crypto.randomUUID(),
@@ -609,6 +748,8 @@ const generateImage = async (
     height,
     seed,
     elapsedMs: Math.max(1, Math.round(performance.now() - startedAt)),
+    operation,
+    ...(references.length ? { sourceImageIds: references.map((reference) => reference.id) } : {}),
   };
 };
 
@@ -629,6 +770,7 @@ const isImageWorkflowOutput = (value: unknown): value is ImageWorkflowOutput => 
     typeof output.modelId === "string" &&
     typeof output.modelName === "string" &&
     typeof output.prompt === "string" &&
+    (output.operation === undefined || output.operation === "generate" || output.operation === "edit" || output.operation === "variation" || output.operation === "multi_reference") &&
     typeof output.width === "number" &&
     typeof output.height === "number" &&
     typeof output.seed === "number" &&
@@ -645,6 +787,8 @@ const workflowOutputToImage = (output: ImageWorkflowOutput): GeneratedImage => (
   height: output.height,
   seed: output.seed,
   elapsedMs: output.elapsedMs,
+  operation: output.operation ?? "generate",
+  ...(output.sourceImageIds?.length ? { sourceImageIds: output.sourceImageIds } : {}),
 });
 
 export class ImageGenerationWorkflow extends WorkflowEntrypoint<Env, ImageWorkflowParams> {
@@ -656,7 +800,19 @@ export class ImageGenerationWorkflow extends WorkflowEntrypoint<Env, ImageWorkfl
         timeout: "15 minutes",
       },
       async () => {
-        const { accessToken, aspectRatio, clientId, jobId, modelId, oauthSessionId, publicPoolSeed, prompt } = event.payload;
+        const {
+          accessToken,
+          aspectRatio,
+          clientId,
+          jobId,
+          modelId,
+          oauthSessionId,
+          operation,
+          publicPoolSeed,
+          prompt,
+          referenceObjectKeys = [],
+          sourceImageIds = [],
+        } = event.payload;
         if (!isImageModelId(modelId)) throw new Error("Unsupported image model.");
         const model = getImageModel(modelId);
         const { width, height } = imageDimensions[aspectRatio];
@@ -672,10 +828,28 @@ export class ImageGenerationWorkflow extends WorkflowEntrypoint<Env, ImageWorkfl
           if (pool.state !== "ready") throw new Error("The public Cloudflare AI pool is unavailable for this image job.");
           ai = createPublicAiPoolBinding(pool.accounts, publicPoolSeed);
         }
-        const result = await ai.run(
-          model.id,
-          buildImageInput(model.id, prompt, width, height, seed),
-        );
+        const references: PreparedImageReference[] = [];
+        for (const [index, objectKey] of referenceObjectKeys.entries()) {
+          const object = await this.env.IMAGE_RESULTS?.get(objectKey);
+          if (!object) throw new Error("A reference image expired before generation started.");
+          references.push({
+            id: sourceImageIds[index] ?? `reference-${index}`,
+            bytes: new Uint8Array(await object.arrayBuffer()),
+            mimeType: object.httpMetadata?.contentType || "image/jpeg",
+            prompt: "",
+          });
+        }
+        let result: unknown;
+        try {
+          result = await ai.run(
+            model.id,
+            buildImageInput(model.id, prompt, width, height, seed, references),
+          );
+        } finally {
+          if (this.env.IMAGE_RESULTS && referenceObjectKeys.length) {
+            await this.env.IMAGE_RESULTS.delete(referenceObjectKeys).catch(() => undefined);
+          }
+        }
         const { bytes, mimeType } = await normalizeImageBytes(result);
         const objectKey = `image-jobs/${jobId}`;
         if (!this.env.IMAGE_RESULTS) {
@@ -702,6 +876,8 @@ export class ImageGenerationWorkflow extends WorkflowEntrypoint<Env, ImageWorkfl
           objectKey,
           prompt,
           seed,
+          operation,
+          ...(sourceImageIds.length ? { sourceImageIds } : {}),
           width,
         };
       },
@@ -876,8 +1052,9 @@ const imageToolDefinition = {
   function: {
     name: "generate_image",
     description:
-      "Create a brand-new image from a text description. Decide by semantic intent, not exact words. " +
+      "Create a new image or genuinely edit/iterate on an available generated image. Decide by semantic intent, not exact words. " +
       "Use this whenever the user asks to create, draw, illustrate, design, render, visualize, or make a visual artifact such as a poster, icon, scene, product shot, or artwork. " +
+      "Use edit or variation when the user asks to change, restyle, remake, or make another version of a previous image; use multi_reference when several available images should be combined. " +
       "Equivalent requests in any language should trigger it. Do not use it merely to analyze or discuss an existing image. " +
       "Write a detailed, self-contained generation prompt that preserves the user's requested subject, style, composition, mood, and visible text.",
     parameters: {
@@ -894,8 +1071,19 @@ const imageToolDefinition = {
           enum: ["square", "landscape", "portrait"],
           description: "Choose the composition that best matches the request. Defaults to square.",
         },
+        operation: {
+          type: "string",
+          enum: ["generate", "edit", "variation", "multi_reference"],
+          description: "Use generate for a new image, edit for requested changes, variation for another version, and multi_reference to combine several available images.",
+        },
+        reference_image_ids: {
+          type: "array",
+          maxItems: 4,
+          items: { type: "string" },
+          description: "IDs of available reference images. Required for edit, variation, and multi_reference when IDs are provided in context.",
+        },
       },
-      required: ["prompt"],
+      required: ["prompt", "operation"],
     },
   },
 };
@@ -1233,8 +1421,9 @@ const handleToolChat = (
   temperature: number,
   maxTokens: number,
   imageModelId: string,
+  imageReferences: ImageReferenceRequest[],
 ): Response => {
-  const imageModel = getImageModel(imageModelId);
+  const selectedImageModel = getImageModel(imageModelId);
   const prefersChinese = request.headers.get("accept-language")?.toLowerCase().startsWith("zh") ?? false;
   let cancelled = false;
   let imageInvocationStarted = false;
@@ -1247,6 +1436,10 @@ const handleToolChat = (
         if (!cancelled) controller.enqueue(encodeSse(payload));
       };
       const sendImageState = (state: ImageGenerationState) => send({ image_generation: state });
+      const referenceCatalog = imageReferences.map((reference) => ({
+        id: reference.id,
+        prompt: reference.prompt,
+      }));
       const toolMessages = [
         {
           role: "system",
@@ -1254,11 +1447,16 @@ const handleToolChat = (
             "You are a conversational assistant with a working generate_image tool connected to a real image model. " +
             "Call it whenever the user's semantic intent is to create a new visual, even when they do not say the exact words 'generate an image'. " +
             "A referential follow-up asking for another result, a variation, a remake, or a changed version of a previously generated visual is also creation intent; infer a self-contained prompt from the conversation and retained image-tool context. " +
+            "For those follow-ups, call the tool with edit or variation and the relevant reference image IDs. The application will pass the real image pixels to the image model; never pretend an edit happened without the tool. " +
             "Do not call it for ordinary questions, coding requests, or analysis of an existing image. " +
             "When no tool is needed, answer the user directly and normally in this same response. " +
             "Never expose internal application context or claim an image was created without calling the tool.",
         },
         ...(retainedImageContext ? [retainedImageContextMessage(retainedImageContext)] : []),
+        ...(referenceCatalog.length ? [{
+          role: "system" as const,
+          content: "Available generated-image references (trusted metadata only):\n" + JSON.stringify(referenceCatalog),
+        }] : []),
         ...messages,
       ];
 
@@ -1270,10 +1468,14 @@ const handleToolChat = (
         const prompt = typeof args.prompt === "string" ? args.prompt.trim().slice(0, 2_000) : "";
         const aspectRatio: ImageAspectRatio =
           args.aspect_ratio === "landscape" || args.aspect_ratio === "portrait" ? args.aspect_ratio : "square";
+        const operation: ImageOperation =
+          args.operation === "edit" || args.operation === "variation" || args.operation === "multi_reference"
+            ? args.operation
+            : "generate";
         if (!prompt) {
           imageInvocationFailed = true;
           const message = prefersChinese ? "聊天模型没有提供有效的绘图描述。" : "The chat model did not provide a valid image prompt.";
-          sendImageState({ status: "error", modelId: imageModel.id, modelName: imageModel.name, message });
+          sendImageState({ status: "error", modelId: selectedImageModel.id, modelName: selectedImageModel.name, message, operation });
           return `Image generation failed: ${message}`;
         }
 
@@ -1281,19 +1483,46 @@ const handleToolChat = (
         if (!imageRateLimit.success) {
           imageInvocationFailed = true;
           const message = prefersChinese ? "生图请求过于频繁，请稍后再试。" : "Too many image requests. Please try again shortly.";
-          sendImageState({ status: "error", modelId: imageModel.id, modelName: imageModel.name, prompt, message });
+          sendImageState({ status: "error", modelId: selectedImageModel.id, modelName: selectedImageModel.name, prompt, message, operation });
           return `Image generation failed: ${message}`;
         }
 
         let jobId: string | undefined;
-        sendImageState({ status: "generating", modelId: imageModel.id, modelName: imageModel.name, prompt });
+        let imageModel = selectedImageModel;
+        let references: PreparedImageReference[] = [];
         try {
+          references = await selectImageReferences(
+            request,
+            env,
+            imageReferences,
+            operation,
+            args.reference_image_ids,
+          );
+          if (references.length) imageModel = getImageModel("@cf/black-forest-labs/flux-2-dev");
+          const sourceImageIds = references.map((reference) => reference.id);
+          sendImageState({
+            status: "generating",
+            modelId: imageModel.id,
+            modelName: imageModel.name,
+            prompt,
+            operation,
+            ...(sourceImageIds.length ? { sourceImageIds } : {}),
+          });
           let image: GeneratedImage;
           if (imageModel.id === "@cf/black-forest-labs/flux-2-dev" && durableImageJobsAvailable(env)) {
             jobId = crypto.randomUUID();
             const accessToken = Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+            const referenceObjectKeys: string[] = [];
             let instance: WorkflowInstance | undefined;
             try {
+              for (const [index, reference] of references.entries()) {
+                const objectKey = `image-jobs/${jobId}/references/${index}`;
+                await env.IMAGE_RESULTS!.put(objectKey, reference.bytes, {
+                  httpMetadata: { contentType: reference.mimeType },
+                  customMetadata: { clientId: getClientId(request) },
+                });
+                referenceObjectKeys.push(objectKey);
+              }
               instance = await env.IMAGE_WORKFLOW!.create({
                 id: jobId,
                 params: {
@@ -1303,12 +1532,18 @@ const handleToolChat = (
                   jobId,
                   modelId: imageModel.id,
                   oauthSessionId,
+                  operation,
                   publicPoolSeed,
                   prompt,
+                  ...(referenceObjectKeys.length ? { referenceObjectKeys } : {}),
+                  ...(sourceImageIds.length ? { sourceImageIds } : {}),
                 },
                 retention: { successRetention: "1 day", errorRetention: "1 day" },
               });
             } catch (error) {
+              if (referenceObjectKeys.length) {
+                await env.IMAGE_RESULTS!.delete(referenceObjectKeys).catch(() => undefined);
+              }
               console.warn("Durable image workflow is unavailable; returning the image directly.", {
                 model: imageModel.id,
                 message: error instanceof Error ? error.message : "Unknown workflow error",
@@ -1317,7 +1552,7 @@ const handleToolChat = (
 
             if (!instance) {
               jobId = undefined;
-              image = await generateImage(ai, imageModel.id, prompt, aspectRatio);
+              image = await generateImage(ai, imageModel.id, prompt, aspectRatio, operation, references);
             } else {
               sendImageState({
                 status: "generating",
@@ -1325,6 +1560,8 @@ const handleToolChat = (
                 modelName: imageModel.name,
                 prompt,
                 jobId,
+                operation,
+                ...(sourceImageIds.length ? { sourceImageIds } : {}),
               });
               try {
                 image = workflowOutputToImage(await waitForWorkflowOutput(instance));
@@ -1335,8 +1572,15 @@ const handleToolChat = (
                   message: error instanceof Error ? error.message : "Unknown R2 error",
                 });
                 jobId = undefined;
-                sendImageState({ status: "generating", modelId: imageModel.id, modelName: imageModel.name, prompt });
-                image = await generateImage(ai, imageModel.id, prompt, aspectRatio);
+                sendImageState({
+                  status: "generating",
+                  modelId: imageModel.id,
+                  modelName: imageModel.name,
+                  prompt,
+                  operation,
+                  ...(sourceImageIds.length ? { sourceImageIds } : {}),
+                });
+                image = await generateImage(ai, imageModel.id, prompt, aspectRatio, operation, references);
               }
             }
           } else {
@@ -1345,7 +1589,7 @@ const handleToolChat = (
                 model: imageModel.id,
               });
             }
-            image = await generateImage(ai, imageModel.id, prompt, aspectRatio);
+            image = await generateImage(ai, imageModel.id, prompt, aspectRatio, operation, references);
           }
           imageInvocationSucceeded = true;
           send({ generated_image: image });
@@ -1358,9 +1602,22 @@ const handleToolChat = (
             message: error instanceof Error ? error.message : "Unknown image generation error",
           });
           const message = prefersChinese
-            ? "所选生图模型暂时无法完成请求，请稍后重试或更换模型。"
-            : "The selected image model could not complete the request. Try again or choose another model.";
-          sendImageState({ status: "error", modelId: imageModel.id, modelName: imageModel.name, prompt, message, jobId });
+            ? error instanceof Error && error.message === "reference_image_missing"
+              ? "没有找到可编辑的上一张图片，请先生成或上传一张参考图。"
+              : "所选生图模型暂时无法完成请求，请稍后重试或更换模型。"
+            : error instanceof Error && error.message === "reference_image_missing"
+              ? "No previous image is available to edit. Generate or attach a reference image first."
+              : "The selected image model could not complete the request. Try again or choose another model.";
+          sendImageState({
+            status: "error",
+            modelId: imageModel.id,
+            modelName: imageModel.name,
+            prompt,
+            message,
+            jobId,
+            operation,
+            ...(references.length ? { sourceImageIds: references.map((reference) => reference.id) } : {}),
+          });
           return `Image generation failed: ${message}`;
         }
       };
@@ -1545,6 +1802,12 @@ const handleChat = async (request: Request, env: Env): Promise<Response> => {
   if (supportsTools && !isImageModelId(imageModelId)) {
     return apiError("Select a supported Cloudflare-hosted image model.", 400, "invalid_image_model");
   }
+  let imageReferences: ImageReferenceRequest[] = [];
+  try {
+    imageReferences = supportsTools ? parseImageReferenceRequests(body.imageReferences) : [];
+  } catch {
+    return apiError("The generated-image references are invalid or too large.", 400, "invalid_image_references");
+  }
 
   const legacyVision = body.model === LEGACY_VISION_MODEL;
   const parsedMessages = parseApiMessages(body.messages, {
@@ -1587,6 +1850,7 @@ const handleChat = async (request: Request, env: Env): Promise<Response> => {
       temperature,
       maxTokens,
       imageModelId as string,
+      imageReferences,
     );
   }
 
@@ -1624,6 +1888,290 @@ const handleChat = async (request: Request, env: Env): Promise<Response> => {
   }
 };
 
+type ChatSessionStatus = "running" | "complete" | "error" | "cancelled";
+
+interface ChatSessionMeta {
+  clientId: string;
+  status: ChatSessionStatus;
+  cursor: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+interface StoredChatEvent {
+  parts: number;
+}
+
+interface ChatSessionSubscriber {
+  controller: ReadableStreamDefaultController<Uint8Array>;
+  requestedCursor: number;
+  ready: boolean;
+  pending: Array<{ cursor: number; data: string }>;
+  terminal?: boolean;
+}
+
+const CHAT_SESSION_META_KEY = "meta";
+const CHAT_EVENT_PART_CHARACTERS = 48_000;
+const CHAT_SESSION_RETENTION_MS = 24 * 60 * 60 * 1_000;
+
+const chatEventManifestKey = (cursor: number): string => `event:${String(cursor).padStart(8, "0")}`;
+const chatEventPartKey = (cursor: number, part: number): string =>
+  `${chatEventManifestKey(cursor)}:part:${String(part).padStart(4, "0")}`;
+
+const formatSessionEvent = (cursor: number, data: string): Uint8Array =>
+  new TextEncoder().encode(`id: ${cursor}\ndata: ${data}\n\n`);
+
+export class ChatSession {
+  private readonly subscribers = new Set<ChatSessionSubscriber>();
+  private upstreamReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  private cancelled = false;
+
+  constructor(
+    private readonly state: DurableObjectState,
+    private readonly env: Env,
+  ) {}
+
+  private async getMeta(): Promise<ChatSessionMeta | undefined> {
+    return this.state.storage.get<ChatSessionMeta>(CHAT_SESSION_META_KEY);
+  }
+
+  private async putMeta(meta: ChatSessionMeta): Promise<void> {
+    await this.state.storage.put(CHAT_SESSION_META_KEY, meta);
+  }
+
+  private async storeEvent(cursor: number, data: string): Promise<void> {
+    const parts: string[] = [];
+    for (let offset = 0; offset < data.length; offset += CHAT_EVENT_PART_CHARACTERS) {
+      parts.push(data.slice(offset, offset + CHAT_EVENT_PART_CHARACTERS));
+    }
+    if (!parts.length) parts.push("");
+    await Promise.all([
+      this.state.storage.put(chatEventManifestKey(cursor), { parts: parts.length } satisfies StoredChatEvent),
+      ...parts.map((part, index) => this.state.storage.put(chatEventPartKey(cursor, index), part)),
+    ]);
+  }
+
+  private async readEvent(cursor: number): Promise<string | undefined> {
+    const manifest = await this.state.storage.get<StoredChatEvent>(chatEventManifestKey(cursor));
+    if (!manifest || !Number.isInteger(manifest.parts) || manifest.parts < 1) return undefined;
+    const keys = Array.from({ length: manifest.parts }, (_, index) => chatEventPartKey(cursor, index));
+    const stored = await this.state.storage.get<string>(keys);
+    return keys.map((key) => stored.get(key) ?? "").join("");
+  }
+
+  private broadcast(cursor: number, data: string): void {
+    for (const subscriber of [...this.subscribers]) {
+      if (!subscriber.ready) {
+        subscriber.pending.push({ cursor, data });
+        continue;
+      }
+      if (cursor <= subscriber.requestedCursor) continue;
+      try {
+        subscriber.controller.enqueue(formatSessionEvent(cursor, data));
+        subscriber.requestedCursor = cursor;
+      } catch {
+        this.subscribers.delete(subscriber);
+      }
+    }
+  }
+
+  private async append(data: string): Promise<number> {
+    const current = await this.getMeta();
+    if (!current) throw new Error("Chat session metadata is missing.");
+    const cursor = current.cursor + 1;
+    const meta = { ...current, cursor, updatedAt: Date.now() };
+    await this.storeEvent(cursor, data);
+    await this.putMeta(meta);
+    this.broadcast(cursor, data);
+    return cursor;
+  }
+
+  private closeSubscribers(): void {
+    for (const subscriber of [...this.subscribers]) {
+      if (!subscriber.ready) {
+        subscriber.terminal = true;
+        continue;
+      }
+      try {
+        subscriber.controller.close();
+      } catch {
+        // The browser may already have closed its copy of the stream.
+      }
+    }
+    this.subscribers.clear();
+  }
+
+  private async finish(status: Exclude<ChatSessionStatus, "running">): Promise<void> {
+    const meta = await this.getMeta();
+    if (!meta || meta.status !== "running") return;
+    await this.putMeta({ ...meta, status, updatedAt: Date.now() });
+    this.closeSubscribers();
+  }
+
+  private async subscribe(requestedCursor: number): Promise<Response> {
+    let subscriber: ChatSessionSubscriber | undefined;
+    const stream = new ReadableStream<Uint8Array>({
+      start: async (controller) => {
+        subscriber = { controller, requestedCursor, ready: false, pending: [] };
+        this.subscribers.add(subscriber);
+        const snapshot = await this.getMeta();
+        if (!snapshot) {
+          controller.enqueue(formatSessionEvent(1, JSON.stringify({ error: "Chat session not found." })));
+          controller.close();
+          this.subscribers.delete(subscriber);
+          return;
+        }
+        for (let cursor = requestedCursor + 1; cursor <= snapshot.cursor; cursor += 1) {
+          const data = await this.readEvent(cursor);
+          if (data === undefined) continue;
+          controller.enqueue(formatSessionEvent(cursor, data));
+          subscriber.requestedCursor = cursor;
+        }
+        subscriber.pending
+          .filter((event) => event.cursor > subscriber!.requestedCursor)
+          .sort((left, right) => left.cursor - right.cursor)
+          .forEach((event) => {
+            controller.enqueue(formatSessionEvent(event.cursor, event.data));
+            subscriber!.requestedCursor = event.cursor;
+          });
+        subscriber.pending = [];
+        subscriber.ready = true;
+        if (snapshot.status !== "running" || subscriber.terminal) {
+          if (requestedCursor >= snapshot.cursor) {
+            controller.enqueue(formatSessionEvent(snapshot.cursor, "[DONE]"));
+          }
+          controller.close();
+          this.subscribers.delete(subscriber);
+        }
+      },
+      cancel: () => {
+        if (subscriber) this.subscribers.delete(subscriber);
+      },
+    });
+    const headers = sseHeaders();
+    headers.set("x-neurondeck-resumable", "true");
+    return new Response(stream, { headers });
+  }
+
+  private async runChat(request: Request): Promise<void> {
+    let sawCompletion = false;
+    try {
+      const response = await handleChat(request, this.env);
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { error?: { message?: string } } | null;
+        await this.append(JSON.stringify({ error: payload?.error?.message || `Chat request failed (${response.status}).` }));
+        await this.append("[DONE]");
+        await this.finish("error");
+        return;
+      }
+      if (!response.body) throw new Error("The model returned an empty stream.");
+      this.upstreamReader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (!this.cancelled) {
+        const { value, done } = await this.upstreamReader.read();
+        buffer += decoder.decode(value, { stream: !done });
+        const blocks = buffer.split(/\r?\n\r?\n/);
+        buffer = blocks.pop() ?? "";
+        for (const block of blocks) {
+          const data = block
+            .split(/\r?\n/)
+            .filter((line) => line.startsWith("data:"))
+            .map((line) => line.slice(5).trimStart())
+            .join("\n");
+          if (!data) continue;
+          await this.append(data);
+          if (data === "[DONE]" || /"done"\s*:\s*true/.test(data)) sawCompletion = true;
+        }
+        if (done) break;
+      }
+      const tail = buffer.trim();
+      if (!this.cancelled && tail) {
+        const data = tail.startsWith("data:") ? tail.slice(5).trimStart() : tail;
+        await this.append(data);
+        if (data === "[DONE]" || /"done"\s*:\s*true/.test(data)) sawCompletion = true;
+      }
+      if (this.cancelled) return;
+      if (!sawCompletion) {
+        await this.append(JSON.stringify({ error: "The model stream ended before completion." }));
+        await this.append("[DONE]");
+        await this.finish("error");
+        return;
+      }
+      await this.finish("complete");
+    } catch (error) {
+      if (this.cancelled) return;
+      console.error("Resumable chat session failed", {
+        message: error instanceof Error ? error.message : "Unknown chat session error",
+      });
+      await this.append(JSON.stringify({ error: "The selected model could not complete this request." })).catch(() => undefined);
+      await this.append("[DONE]").catch(() => undefined);
+      await this.finish("error");
+    } finally {
+      this.upstreamReader = null;
+    }
+  }
+
+  private async start(request: Request, requestedCursor: number): Promise<Response> {
+    const clientId = getClientId(request);
+    if (clientId === "anonymous") return apiError("A valid client id is required.", 401, "client_required");
+    const existing = await this.getMeta();
+    if (existing) {
+      if (existing.clientId !== clientId) return apiError("This chat session belongs to another client.", 403, "session_forbidden");
+      return this.subscribe(requestedCursor);
+    }
+    const body = await request.text();
+    if (!body) return apiError("The request body must be valid JSON.", 400, "invalid_json");
+    const timestamp = Date.now();
+    await this.putMeta({ clientId, status: "running", cursor: 0, createdAt: timestamp, updatedAt: timestamp });
+    await this.state.storage.setAlarm(timestamp + CHAT_SESSION_RETENTION_MS);
+    const upstreamRequest = new Request(new URL("/api/chat", request.url), {
+      method: "POST",
+      headers: request.headers,
+      body,
+    });
+    this.state.waitUntil(this.runChat(upstreamRequest));
+    return this.subscribe(requestedCursor);
+  }
+
+  private async cancel(request: Request): Promise<Response> {
+    const meta = await this.getMeta();
+    if (!meta) return apiError("Chat session not found.", 404, "session_not_found");
+    if (meta.clientId !== getClientId(request)) return apiError("This chat session belongs to another client.", 403, "session_forbidden");
+    if (meta.status === "running") {
+      this.cancelled = true;
+      await this.upstreamReader?.cancel().catch(() => undefined);
+      await this.append(JSON.stringify({ cancelled: true }));
+      await this.append("[DONE]");
+      await this.finish("cancelled");
+    }
+    return json({ ok: true, status: "cancelled" });
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    if (!isSameOrigin(request)) return apiError("Cross-origin chat access is not allowed.", 403, "origin_rejected");
+    const url = new URL(request.url);
+    const cursorValue = Number(url.searchParams.get("cursor") ?? "0");
+    const cursor = Number.isSafeInteger(cursorValue) && cursorValue >= 0 ? cursorValue : 0;
+    if (request.method === "POST" && url.pathname.endsWith("/cancel")) return this.cancel(request);
+    if (request.method === "POST") return this.start(request, cursor);
+    if (request.method === "GET" && url.pathname.endsWith("/events")) {
+      const meta = await this.getMeta();
+      if (!meta) return apiError("Chat session not found.", 404, "session_not_found");
+      if (meta.clientId !== getClientId(request)) return apiError("This chat session belongs to another client.", 403, "session_forbidden");
+      return this.subscribe(cursor);
+    }
+    return apiError("Chat session route not found.", 404, "not_found");
+  }
+
+  async alarm(): Promise<void> {
+    this.closeSubscribers();
+    await this.state.storage.deleteAll();
+  }
+}
+
+const chatSessionRoute = /^\/api\/chat\/sessions\/([0-9a-f-]{36})(?:\/(events|cancel))?$/;
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -1647,6 +2195,7 @@ export default {
         ok: true,
         service: "neurondeck",
         imageDelivery: durableImageJobsAvailable(env) ? "durable" : "direct",
+        chatRecovery: env.CHAT_SESSIONS ? "durable" : "direct",
         modelCount: catalog.models.length,
         imageModelCount: IMAGE_MODELS.length,
         ttsModelCount: Object.keys(TTS_MODEL_IDS).length,
@@ -1669,6 +2218,15 @@ export default {
       return url.pathname.includes("/image.")
         ? handleImageJobResult(request, env, imageJobMatch[1])
         : handleImageJobStatus(request, env, imageJobMatch[1]);
+    }
+
+    const chatSessionMatch = chatSessionRoute.exec(url.pathname);
+    if (chatSessionMatch) {
+      if (!env.CHAT_SESSIONS) {
+        return apiError("Resumable chat sessions are not enabled for this deployment.", 503, "chat_sessions_disabled");
+      }
+      const objectId = env.CHAT_SESSIONS.idFromName(chatSessionMatch[1]);
+      return env.CHAT_SESSIONS.get(objectId).fetch(request);
     }
 
     if (request.method === "POST" && url.pathname === "/api/chat") {

@@ -62,6 +62,7 @@ import { loadWorkspace, saveWorkspace } from "./lib/storage";
 import { hasRenderableMessageOutput } from "./lib/message-output";
 import {
   getMessageContentForRequest,
+  getImageReferencesForRequest,
   getRetainedImageContextForRequest,
   stripInternalImageContext,
 } from "./lib/chat-context";
@@ -269,6 +270,7 @@ function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const messageEndRef = useRef<HTMLDivElement | null>(null);
   const resumedImageJobsRef = useRef(false);
+  const resumedChatSessionsRef = useRef(false);
 
   const activeConversation =
     workspace.conversations.find((conversation) => conversation.id === workspace.activeConversationId) ??
@@ -417,6 +419,13 @@ function App() {
   }, [workspace, hydrated]);
 
   useEffect(() => {
+    if (!hydrated) return;
+    const persistBeforeLeaving = () => void saveWorkspace(workspace);
+    window.addEventListener("pagehide", persistBeforeLeaving);
+    return () => window.removeEventListener("pagehide", persistBeforeLeaving);
+  }, [workspace, hydrated]);
+
+  useEffect(() => {
     document.documentElement.dataset.theme = theme;
     document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.setAttribute(
       "content",
@@ -527,7 +536,7 @@ function App() {
         const jobId = message.imageGeneration?.status === "generating"
           ? message.imageGeneration.jobId
           : undefined;
-        if (!jobId || message.generatedImages?.length) continue;
+        if (!jobId || message.generatedImages?.length || message.generationSessionId) continue;
         const controller = new AbortController();
         controllers.push(controller);
         void waitForImageJob({
@@ -569,15 +578,25 @@ function App() {
   }, [hydrated]);
 
   const generateResponse = useCallback(
-    async (conversation: Conversation, contextMessages: ChatMessage[], assistantId: string) => {
+    async (
+      conversation: Conversation,
+      contextMessages: ChatMessage[],
+      assistantId: string,
+      resumedMessage?: ChatMessage,
+    ) => {
       const controller = new AbortController();
       abortRef.current = controller;
       setGenerating(true);
-      const startedAt = performance.now();
-      let content = "";
-      let reasoning = "";
-      let generatedImages: GeneratedImage[] = [];
-      let pendingImageJobId: string | undefined;
+      const sessionId = resumedMessage?.generationSessionId ?? assistantId;
+      const startedAt = Date.parse(resumedMessage?.createdAt ?? now());
+      let content = resumedMessage?.content ?? "";
+      let reasoning = resumedMessage?.reasoning ?? "";
+      let generatedImages: GeneratedImage[] = resumedMessage?.generatedImages ?? [];
+      let pendingImageJobId = resumedMessage?.imageGeneration?.status === "generating"
+        ? resumedMessage.imageGeneration.jobId
+        : undefined;
+      let streamCursor = resumedMessage?.streamCursor ?? 0;
+      let cancelledByServer = false;
 
       const recoverPendingImage = async (): Promise<boolean> => {
         if (!pendingImageJobId) return false;
@@ -603,41 +622,48 @@ function App() {
         return true;
       };
 
-      const requestMessages = pruneAttachmentsForRequest(contextMessages, conversation.modelId);
-      const apiMessages = [
-        ...(conversation.systemPrompt.trim()
-          ? [{ role: "system" as const, content: conversation.systemPrompt.trim() }]
-          : []),
-        ...requestMessages.map((message) => {
-          const retainedImageContext = getRetainedImageContextForRequest(message);
-          return {
-            role: message.role,
-            content: getMessageContentForRequest(message),
-            ...(message.attachments?.length ? { attachments: message.attachments } : {}),
-            ...(retainedImageContext ? { retainedImageContext } : {}),
-          };
-        }),
-      ];
-      const requestBody = JSON.stringify({
-        model: conversation.modelId,
-        messages: apiMessages,
-        temperature: conversation.temperature,
-        maxTokens: conversation.maxTokens,
-        imageModel: conversation.imageModelId,
-      });
+      const requestBody = resumedMessage ? undefined : (() => {
+        const requestMessages = pruneAttachmentsForRequest(contextMessages, conversation.modelId);
+        const apiMessages = [
+          ...(conversation.systemPrompt.trim()
+            ? [{ role: "system" as const, content: conversation.systemPrompt.trim() }]
+            : []),
+          ...requestMessages.map((message) => {
+            const retainedImageContext = getRetainedImageContextForRequest(message);
+            return {
+              role: message.role,
+              content: getMessageContentForRequest(message),
+              ...(message.attachments?.length ? { attachments: message.attachments } : {}),
+              ...(retainedImageContext ? { retainedImageContext } : {}),
+            };
+          }),
+        ];
+        return JSON.stringify({
+          model: conversation.modelId,
+          messages: apiMessages,
+          temperature: conversation.temperature,
+          maxTokens: conversation.maxTokens,
+          imageModel: conversation.imageModelId,
+          imageReferences: getImageReferencesForRequest(contextMessages),
+        });
+      })();
 
       try {
         let recoveryAttempts = 0;
+        let starting = !resumedMessage;
         while (true) {
           try {
-            const response = await fetch("/api/chat", {
-              method: "POST",
+            const endpoint = starting
+              ? `/api/chat/sessions/${encodeURIComponent(sessionId)}`
+              : `/api/chat/sessions/${encodeURIComponent(sessionId)}/events?cursor=${streamCursor}`;
+            const response = await fetch(endpoint, {
+              method: starting ? "POST" : "GET",
               headers: {
-                "content-type": "application/json",
+                ...(starting ? { "content-type": "application/json" } : {}),
                 "x-neurondeck-client": getClientId(),
                 "accept-language": language === "zh" ? "zh-CN" : "en",
               },
-              body: requestBody,
+              ...(starting ? { body: requestBody } : {}),
               signal: controller.signal,
             });
 
@@ -649,22 +675,33 @@ function App() {
                 getLocalizedError(language, data?.error?.code, data?.error?.message || t.requestFailed(response.status)),
               );
             }
+            starting = false;
+            updateMessage(conversation.id, assistantId, (message) => ({
+              ...message,
+              generationSessionId: sessionId,
+              streamCursor,
+              recoveryState: recoveryAttempts ? "recovering" : undefined,
+            }));
 
             await consumeChatStream(response, (event) => {
+              if (event.cursor != null) streamCursor = Math.max(streamCursor, event.cursor);
               if (event.error) {
                 throw new Error(language === "zh" ? t.errors.inference_failed : event.error);
               }
               if (event.content) content = stripInternalImageContext(content + event.content);
               if (event.reasoning) reasoning += event.reasoning;
+              if (event.cancelled) cancelledByServer = true;
               if (event.imageGeneration?.status === "generating" && event.imageGeneration.jobId) {
                 pendingImageJobId = event.imageGeneration.jobId;
               }
               if (event.imageGeneration?.status === "error") pendingImageJobId = undefined;
               if (event.generatedImage) {
                 pendingImageJobId = undefined;
-                generatedImages = [...generatedImages, event.generatedImage];
+                if (!generatedImages.some((image) => image.id === event.generatedImage!.id)) {
+                  generatedImages = [...generatedImages, event.generatedImage];
+                }
               }
-              if (event.content || event.reasoning || event.generatedImage || event.imageGeneration) {
+              if (event.content || event.reasoning || event.generatedImage || event.imageGeneration || event.cursor != null) {
                 updateMessage(conversation.id, assistantId, (message) => ({
                   ...message,
                   content,
@@ -680,46 +717,61 @@ function App() {
                         }
                       : message.imageGeneration),
                   status: "streaming",
+                  generationSessionId: sessionId,
+                  streamCursor,
+                  recoveryState: undefined,
                 }));
               }
             });
-            await recoverPendingImage();
             break;
           } catch (error) {
             if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
-            if (isRecoverableStreamError(error) && generatedImages.length) break;
-            if (isRecoverableStreamError(error) && pendingImageJobId) {
-              await recoverPendingImage();
-              break;
-            }
-            if (!isRecoverableStreamError(error) || recoveryAttempts >= 1) throw error;
+            if (!isRecoverableStreamError(error) || recoveryAttempts >= 8) throw error;
 
             recoveryAttempts += 1;
-            await waitForPageVisible(controller.signal);
-            content = "";
-            reasoning = "";
-            generatedImages = [];
             updateMessage(conversation.id, assistantId, (message) => ({
               ...message,
-              content: "",
-              reasoning: "",
-              generatedImages: [],
-              imageGeneration: undefined,
-              status: "streaming",
+              generationSessionId: sessionId,
+              streamCursor,
+              recoveryState: "recovering",
             }));
+            await waitForPageVisible(controller.signal);
+            await new Promise<void>((resolve, reject) => {
+              const handleAbort = () => {
+                window.clearTimeout(timeout);
+                reject(new DOMException("Aborted", "AbortError"));
+              };
+              const timeout = window.setTimeout(() => {
+                controller.signal.removeEventListener("abort", handleAbort);
+                resolve();
+              }, Math.min(3_000, 300 * recoveryAttempts));
+              controller.signal.addEventListener("abort", handleAbort, { once: true });
+            });
           }
         }
 
         updateMessage(conversation.id, assistantId, (message) => ({
           ...message,
-          content: content || (generatedImages.length ? t.imageGeneratedFallback : t.emptyCompletion),
+          content: cancelledByServer
+            ? content || t.generationStopped
+            : content || (generatedImages.length ? t.imageGeneratedFallback : t.emptyCompletion),
           reasoning,
           generatedImages,
           status: "complete",
-          elapsedMs: Math.round(performance.now() - startedAt),
+          elapsedMs: Math.max(1, Date.now() - startedAt),
+          generationSessionId: sessionId,
+          streamCursor,
+          recoveryState: undefined,
         }));
       } catch (error) {
         const stopped = error instanceof DOMException && error.name === "AbortError";
+        if (!stopped && pendingImageJobId) {
+          try {
+            await recoverPendingImage();
+          } catch {
+            // Preserve the stream error below if the separate image job is also unavailable.
+          }
+        }
         const message = stopped
           ? content || t.generationStopped
           : error instanceof Error
@@ -731,7 +783,10 @@ function App() {
           reasoning,
           generatedImages,
           status: stopped ? "complete" : "error",
-          elapsedMs: Math.round(performance.now() - startedAt),
+          elapsedMs: Math.max(1, Date.now() - startedAt),
+          generationSessionId: sessionId,
+          streamCursor,
+          recoveryState: undefined,
         }));
       } finally {
         abortRef.current = null;
@@ -748,6 +803,19 @@ function App() {
       updateMessage,
     ],
   );
+
+  useEffect(() => {
+    if (!hydrated || resumedChatSessionsRef.current) return;
+    resumedChatSessionsRef.current = true;
+    const conversation = workspace.conversations.find((item) => item.id === workspace.activeConversationId);
+    if (!conversation) return;
+    const messageIndex = conversation.messages.findIndex((message) =>
+      message.role === "assistant" && message.status === "streaming" && Boolean(message.generationSessionId),
+    );
+    if (messageIndex < 0) return;
+    const message = conversation.messages[messageIndex];
+    void generateResponse(conversation, conversation.messages.slice(0, messageIndex), message.id, message);
+  }, [generateResponse, hydrated, workspace]);
 
   const sendMessage = useCallback(async () => {
     const attachments = activeModelSupportsAttachments ? pendingAttachments : [];
@@ -770,7 +838,9 @@ function App() {
       createdAt: timestamp,
       modelId: activeConversation.modelId,
       status: "streaming",
+      streamCursor: 0,
     };
+    assistantMessage.generationSessionId = assistantMessage.id;
     const contextMessages = [...activeConversation.messages, userMessage];
     const snapshot: Conversation = { ...activeConversation, messages: contextMessages };
 
@@ -810,7 +880,9 @@ function App() {
         createdAt: now(),
         modelId: activeConversation.modelId,
         status: "streaming",
+        streamCursor: 0,
       };
+      assistantMessage.generationSessionId = assistantMessage.id;
       updateConversation(activeConversation.id, (conversation) => ({
         ...conversation,
         updatedAt: now(),
@@ -820,6 +892,19 @@ function App() {
     },
     [activeConversation, generateResponse, generating, updateConversation],
   );
+
+  const stopGeneration = useCallback(() => {
+    const pending = [...activeConversation.messages].reverse().find((message) =>
+      message.role === "assistant" && message.status === "streaming" && message.generationSessionId,
+    );
+    abortRef.current?.abort();
+    if (!pending?.generationSessionId) return;
+    void fetch(`/api/chat/sessions/${encodeURIComponent(pending.generationSessionId)}/cancel`, {
+      method: "POST",
+      headers: { "x-neurondeck-client": getClientId() },
+      keepalive: true,
+    }).catch(() => undefined);
+  }, [activeConversation.messages]);
 
   const editMessage = (messageId: string) => {
     if (generating) return;
@@ -1378,7 +1463,11 @@ function App() {
                         )}
                         <div>
                           <strong>{message.role === "user" ? t.you : getModel(models, message.modelId ?? activeModel.id).name}</strong>
-                          <span>{message.elapsedMs != null ? formatElapsedDuration(message.elapsedMs, language) : message.status === "streaming" ? t.generating : ""}</span>
+                          <span>{message.elapsedMs != null
+                            ? formatElapsedDuration(message.elapsedMs, language)
+                            : message.status === "streaming"
+                              ? message.recoveryState === "recovering" ? t.recovering : t.generating
+                              : ""}</span>
                         </div>
                       </div>
                       <div className={message.status === "error" ? "message-content error" : "message-content"}>
@@ -1544,7 +1633,7 @@ function App() {
                     </div>
                   </div>
                   {generating ? (
-                    <button className="send-button stop" onClick={() => abortRef.current?.abort()} type="button" aria-label={t.stopGenerating}><Square size={15} fill="currentColor" /></button>
+                    <button className="send-button stop" onClick={stopGeneration} type="button" aria-label={t.stopGenerating}><Square size={15} fill="currentColor" /></button>
                   ) : (
                     <button
                       className="send-button"

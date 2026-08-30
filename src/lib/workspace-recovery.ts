@@ -6,6 +6,10 @@ export const recoverInterruptedMessage = (
 ): ChatMessage => {
   if (message.status !== "streaming") return message;
 
+  if (message.generationSessionId) {
+    return { ...message, recoveryState: "recovering" };
+  }
+
   const hasDurableImageJob =
     message.imageGeneration?.status === "generating" && Boolean(message.imageGeneration.jobId);
   if (hasDurableImageJob) return message;

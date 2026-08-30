@@ -41,7 +41,11 @@ export interface GeneratedImage {
   height: number;
   seed?: number;
   elapsedMs?: number;
+  operation?: ImageOperation;
+  sourceImageIds?: string[];
 }
+
+export type ImageOperation = "generate" | "edit" | "variation" | "multi_reference";
 
 export interface ImageGenerationState {
   status: "generating" | "complete" | "error";
@@ -50,6 +54,8 @@ export interface ImageGenerationState {
   jobId?: string;
   prompt?: string;
   message?: string;
+  operation?: ImageOperation;
+  sourceImageIds?: string[];
 }
 
 export interface ChatMessage {
@@ -64,6 +70,9 @@ export interface ChatMessage {
   attachments?: Attachment[];
   generatedImages?: GeneratedImage[];
   imageGeneration?: ImageGenerationState;
+  generationSessionId?: string;
+  streamCursor?: number;
+  recoveryState?: "connecting" | "recovering";
 }
 
 export interface Conversation {
@@ -94,4 +103,6 @@ export interface StreamEvent {
   error?: string;
   generatedImage?: GeneratedImage;
   imageGeneration?: ImageGenerationState;
+  cursor?: number;
+  cancelled?: boolean;
 }

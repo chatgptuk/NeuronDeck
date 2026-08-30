@@ -26,10 +26,11 @@ NeuronDeck brings Cloudflare-hosted chat models, multimodal input, image generat
 
 - 29 Cloudflare-hosted chat models with search, capability filters, favorites, context sizes, and price ordering
 - Chinese and English interface, light appearance by default, and a persistent theme switch
-- Genuine SSE streaming with stop, regenerate, copy, and edit-from-here actions
+- Genuine SSE streaming with temporary Durable Object event persistence and cursor-based resume after refresh, backgrounding, or a dropped connection
 - Image input for vision models, plus PDF, Word, spreadsheet, HTML, XML, OpenDocument, and Numbers attachments
 - Markdown, GitHub-flavored tables, syntax highlighting, code copying, and rendered reasoning
 - Function Calling image generation with FLUX.2 Klein 9B, FLUX.2 Dev, Lucid Origin, and Phoenix 1.0
+- Real edits, variations, and up to four reference images from previous generations; reference operations automatically use FLUX.2 Dev
 - On-demand assistant read-aloud with natural quality by default: Aura-2 for English/Spanish and device voices for Chinese and other languages
 - Adaptive image delivery: direct browser responses by default, optional Workflows and R2 for recovery, with automatic fallback when persistence is unavailable
 - Model-aware output token limits, plus per-conversation system prompts, temperature, and output controls
@@ -40,17 +41,17 @@ NeuronDeck brings Cloudflare-hosted chat models, multimodal input, image generat
 
 ## One-click deployment
 
-Select **Deploy to Cloudflare** above, then sign in to Cloudflare and GitHub to create your own repository and Worker. Cloudflare reads the portable `wrangler.jsonc`, configures Workers AI, and provisions KV for the new deployment. The application is published to the deployer's own `workers.dev` address; it does not bind `ai.chatgpt.org.uk` or connect to this project's production resources.
+Select **Deploy to Cloudflare** above, then sign in to Cloudflare and GitHub to create your own repository and Worker. Cloudflare reads the portable `wrangler.jsonc` and configures Workers AI, Durable Objects, and KV for the new deployment. The application is published to the deployer's own `workers.dev` address; it does not bind `ai.chatgpt.org.uk` or connect to this project's production resources.
 
-The default deployment **does not require an R2 subscription**. Generated images are returned to the browser in the active request. Every included image model, including FLUX.2 Dev, remains available, but the request must stay connected and an unfinished image cannot be recovered after a refresh. If R2 and Workflows are configured, NeuronDeck prefers a recoverable background job and automatically falls back to direct delivery when R2 is missing, the Workflow cannot start, or an R2 write fails.
+The default deployment **does not require an R2 subscription**. Chat and image generation continue inside an independent Durable Object session, and the browser can recover missed events by cursor after a refresh, backgrounding, or a temporary network loss. Active generation events are retained for up to 24 hours; long-term conversation history still stays in the browser. With optional R2 and Workflows, FLUX.2 Dev uses a more durable channel for slow jobs and automatically falls back to direct session delivery if persistence is unavailable.
 
 By default, the deployed Worker consumes Workers AI quota from the **Cloudflare account that owns the Worker**. User-facing Cloudflare OAuth is not enabled automatically because every deployment needs its own OAuth client, callback domain, and session secret.
 
 Cloudflare documentation: [Deploy to Cloudflare buttons](https://developers.cloudflare.com/workers/platform/deploy-buttons/) · [Wrangler automatic provisioning](https://developers.cloudflare.com/workers/wrangler/configuration/#automatic-provisioning)
 
-### Optional: enable recoverable background image jobs
+### Optional: enable Workflow/R2 background image jobs
 
-To keep querying a FLUX.2 Dev result after backgrounding, a dropped connection, or a refresh, enable R2 in your Cloudflare account and add both bindings below to your Wrangler configuration. See [`wrangler.production.example.jsonc`](./wrangler.production.example.jsonc) for a complete example:
+To add independent Workflow retries and R2 result persistence for slow FLUX.2 Dev jobs, enable R2 in your Cloudflare account and add both bindings below. Ordinary refresh, background, and temporary-disconnect recovery is already handled by the default Durable Object session and does not require R2. See [`wrangler.production.example.jsonc`](./wrangler.production.example.jsonc) for a complete example:
 
 ```jsonc
 "r2_buckets": [
@@ -161,7 +162,7 @@ For Vite HMR, keep the Worker on port `8787` and run `npm run dev` in a second t
 
 ## Manual deployment
 
-`wrangler.jsonc` is the portable public template without a mandatory R2 dependency. It enables `workers.dev` and lets Wrangler configure Workers AI and KV in the current account. Add R2 and Workflows as described above only when recoverable background image jobs are needed.
+`wrangler.jsonc` is the portable public template without a mandatory R2 dependency. It enables `workers.dev` and lets Wrangler configure Workers AI, Durable Objects, and KV in the current account. Add R2 and Workflows only when the additional background image-job channel is needed.
 
 ```bash
 command -v wrangler
@@ -198,7 +199,7 @@ Cloudflare Worker
 ├── model allowlist, input validation, and genuine SSE forwarding
 ├── Workers AI binding / public credential pool / user-authorized REST API
 ├── Function Calling, on-demand speech synthesis, and adaptive image delivery
-├── encrypted OAuth KV · optional Workflow/R2 image results · Rate Limiting
+├── Durable Object stream resume · encrypted OAuth KV · optional Workflow/R2 image results
 └── Workers Static Assets
 ```
 

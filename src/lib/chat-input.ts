@@ -49,6 +49,9 @@ const parseRetainedImageContext = (value: unknown): RetainedImageContext | undef
   if (!value || typeof value !== "object") return undefined;
   const context = value as Record<string, unknown>;
   const modelName = typeof context.modelName === "string" ? context.modelName.trim() : "";
+  const imageId = typeof context.imageId === "string" && /^[a-zA-Z0-9_-]{1,80}$/.test(context.imageId)
+    ? context.imageId
+    : undefined;
   const prompt = typeof context.prompt === "string" ? context.prompt.replace(/\s+/g, " ").trim() : "";
   const width = context.width;
   const height = context.height;
@@ -57,7 +60,7 @@ const parseRetainedImageContext = (value: unknown): RetainedImageContext | undef
   if ((width as number) < 1 || (width as number) > 4_096 || (height as number) < 1 || (height as number) > 4_096) {
     return undefined;
   }
-  return { modelName, prompt, width: width as number, height: height as number };
+  return { ...(imageId ? { imageId } : {}), modelName, prompt, width: width as number, height: height as number };
 };
 
 export const parseApiMessages = (

@@ -32,4 +32,16 @@ describe("Workers AI stream parser", () => {
     await expect(consumeChatStream(response, (event) => events.push(event))).resolves.toBeUndefined();
     expect(events).toContainEqual({ done: true });
   });
+
+  it("exposes resumable event cursors from SSE ids", async () => {
+    const events: unknown[] = [];
+    const response = new Response('id: 7\ndata: {"response":"resumed"}\n\nid: 8\ndata: [DONE]\n\n');
+
+    await consumeChatStream(response, (event) => events.push(event));
+
+    expect(events).toEqual([
+      { content: "resumed", cursor: 7 },
+      { done: true, cursor: 8 },
+    ]);
+  });
 });

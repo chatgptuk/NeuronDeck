@@ -59,10 +59,22 @@ export const consumeChatStream = async (
   let buffer = "";
   let completed = false;
 
-  const emit = (data: string) => {
+  const emit = (data: string, cursor?: number) => {
     const event = parseSseData(data);
+    if (cursor != null) event.cursor = cursor;
     if (event.done) completed = true;
     onEvent(event);
+  };
+
+  const emitBlock = (block: string) => {
+    const lines = block.split(/\r?\n/);
+    const data = lines
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n");
+    const idLine = lines.find((line) => line.startsWith("id:"));
+    const parsedCursor = idLine ? Number(idLine.slice(3).trim()) : undefined;
+    if (data) emit(data, Number.isSafeInteger(parsedCursor) && (parsedCursor as number) >= 0 ? parsedCursor : undefined);
   };
 
   try {
@@ -73,20 +85,15 @@ export const consumeChatStream = async (
       buffer = blocks.pop() ?? "";
 
       for (const block of blocks) {
-        const data = block
-          .split(/\r?\n/)
-          .filter((line) => line.startsWith("data:"))
-          .map((line) => line.slice(5).trimStart())
-          .join("\n");
-        if (data) emit(data);
+        emitBlock(block);
       }
       if (done) break;
     }
 
     const tail = buffer.trim();
     if (tail) {
-      const data = tail.startsWith("data:") ? tail.slice(5).trimStart() : tail;
-      emit(data);
+      if (tail.includes("data:")) emitBlock(tail);
+      else emit(tail);
     }
   } finally {
     if (!completed) await reader.cancel().catch(() => undefined);

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import worker from "./index";
+import worker, { ChatSession } from "./index";
 
 const pixel = "data:image/png;base64,iVBORw0KGgo=";
 const chatModel = "@cf/zai-org/glm-4.7-flash";
@@ -103,6 +103,104 @@ describe("Cloudflare OAuth routes", () => {
     expect(location.searchParams.get("scope")).toBe("ai.read account-settings.read offline_access");
     expect(response.headers.get("set-cookie")).toContain("HttpOnly");
     expect(put).toHaveBeenCalledOnce();
+  });
+});
+
+describe("resumable chat session routing", () => {
+  it("routes a stable generation id to the same Durable Object", async () => {
+    const sessionId = "11111111-2222-4333-8444-555555555555";
+    const durableFetch = vi.fn(async () => new Response(
+      'id: 1\ndata: {"response":"live"}\n\nid: 2\ndata: [DONE]\n\n',
+      { headers: { "content-type": "text/event-stream" } },
+    ));
+    const get = vi.fn(() => ({ fetch: durableFetch }));
+    const idFromName = vi.fn((name: string) => `object:${name}`);
+    const { env } = createEnv();
+    const request = new Request(`https://ai.chatgpt.org.uk/api/chat/sessions/${sessionId}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: "https://ai.chatgpt.org.uk",
+        "x-neurondeck-client": "integration-test-client",
+      },
+      body: JSON.stringify({ model: chatModel, messages: [{ role: "user", content: "Hello" }] }),
+    });
+
+    const response = await worker.fetch(request, {
+      ...env,
+      CHAT_SESSIONS: { idFromName, get },
+    } as never);
+
+    expect(response.status).toBe(200);
+    expect(idFromName).toHaveBeenCalledWith(sessionId);
+    expect(get).toHaveBeenCalledWith(`object:${sessionId}`);
+    expect(durableFetch).toHaveBeenCalledWith(request);
+    expect(await response.text()).toContain("live");
+  });
+
+  it("persists real SSE events and replays them from a cursor", async () => {
+    const records = new Map<string, unknown>();
+    let background: Promise<unknown> | undefined;
+    const storage = {
+      get: vi.fn(async (key: string | string[]) => {
+        if (!Array.isArray(key)) return records.get(key);
+        const selected = new Map<string, unknown>();
+        for (const item of key) {
+          if (records.has(item)) selected.set(item, records.get(item));
+        }
+        return selected;
+      }),
+      put: vi.fn(async (key: string, value: unknown) => { records.set(key, value); }),
+      setAlarm: vi.fn(async () => undefined),
+      deleteAll: vi.fn(async () => { records.clear(); }),
+    };
+    const state = {
+      storage,
+      waitUntil: vi.fn((promise: Promise<unknown>) => { background = promise; }),
+    };
+    const run = vi.fn(async () => new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(
+          'data: {"response":"first"}\n\ndata: {"response":" second"}\n\ndata: [DONE]\n\n',
+        ));
+        controller.close();
+      },
+    }));
+    const session = new ChatSession(state as never, {
+      AI: { run, toMarkdown: vi.fn() },
+      ASSETS: { fetch: vi.fn() },
+      CHAT_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+    } as never);
+    const sessionId = "11111111-2222-4333-8444-555555555555";
+    const headers = {
+      "content-type": "application/json",
+      origin: "https://ai.chatgpt.org.uk",
+      "x-neurondeck-client": "integration-test-client",
+    };
+    const initial = await session.fetch(new Request(`https://ai.chatgpt.org.uk/api/chat/sessions/${sessionId}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: "@cf/meta/llama-3.2-3b-instruct",
+        messages: [{ role: "user", content: "Hello" }],
+      }),
+    }));
+    const initialBody = await initial.text();
+    await background;
+
+    expect(initial.headers.get("x-neurondeck-resumable")).toBe("true");
+    expect(initialBody).toContain('id: 1\ndata: {"response":"first"}');
+    expect(initialBody).toContain("id: 3\ndata: [DONE]");
+    expect(storage.setAlarm).toHaveBeenCalledOnce();
+
+    const replay = await session.fetch(new Request(
+      `https://ai.chatgpt.org.uk/api/chat/sessions/${sessionId}/events?cursor=1`,
+      { headers: { origin: "https://ai.chatgpt.org.uk", "x-neurondeck-client": "integration-test-client" } },
+    ));
+    const replayBody = await replay.text();
+    expect(replayBody).not.toContain('"first"');
+    expect(replayBody).toContain('id: 2\ndata: {"response":" second"}');
+    expect(replayBody).toContain("id: 3\ndata: [DONE]");
   });
 });
 
@@ -461,6 +559,83 @@ describe("chat streaming", () => {
 });
 
 describe("image generation function calling", () => {
+  it("uses the real previous image pixels for edit requests and transparently selects FLUX.2 Dev", async () => {
+    const devModel = "@cf/black-forest-labs/flux-2-dev";
+    const imageCalls: Array<Record<string, unknown>> = [];
+    const ai = {
+      run: vi.fn(async (model: string, input: Record<string, unknown>) => {
+        if (model === chatModel) {
+          return {
+            choices: [{ message: { tool_calls: [{
+              id: "edit-image-call",
+              type: "function",
+              function: {
+                name: "generate_image",
+                arguments: JSON.stringify({
+                  prompt: "Keep the same cat and change the scene to a candid iPhone photo",
+                  aspect_ratio: "portrait",
+                  operation: "edit",
+                  reference_image_ids: ["source-cat"],
+                }),
+              },
+            }] } }],
+          };
+        }
+        imageCalls.push(input);
+        return { image: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB" };
+      }),
+      toMarkdown: vi.fn(),
+    };
+    const response = await worker.fetch(new Request("https://ai.chatgpt.org.uk/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "accept-language": "zh-CN",
+        "x-neurondeck-client": "test-client-1234",
+      },
+      body: JSON.stringify({
+        model: chatModel,
+        imageModel,
+        messages: [
+          { role: "user", content: "画一只猫" },
+          {
+            role: "assistant",
+            content: "已经画好了。",
+            retainedImageContext: {
+              imageId: "source-cat",
+              modelName: "FLUX.2 Klein 9B",
+              prompt: "A tabby cat in warm light",
+              width: 1024,
+              height: 1024,
+            },
+          },
+          { role: "user", content: "把上一张改成 iPhone 随手拍风格" },
+        ],
+        imageReferences: [{
+          id: "source-cat",
+          dataUrl: pixel,
+          prompt: "A tabby cat in warm light",
+        }],
+      }),
+    }), {
+      AI: ai,
+      ASSETS: { fetch: vi.fn() },
+      CHAT_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+    } as never);
+    const body = await response.text();
+
+    expect(ai.run.mock.calls.map((call) => call[0])).toEqual([chatModel, devModel]);
+    expect(imageCalls).toHaveLength(1);
+    const multipart = imageCalls[0].multipart as { body: ReadableStream; contentType: string };
+    expect(multipart.contentType).toContain("multipart/form-data");
+    const multipartText = await new Response(multipart.body).text();
+    expect(multipartText).toContain("Keep the same cat and change the scene to a candid iPhone photo");
+    expect(multipartText).toContain('name="input_image_0"');
+    expect(body).toContain('"operation":"edit"');
+    expect(body).toContain('"sourceImageIds":["source-cat"]');
+    expect(body).toContain('"modelId":"@cf/black-forest-labs/flux-2-dev"');
+  });
+
   it("streams an ordinary tool-model reply from the first and only inference", async () => {
     let finishStream: (() => void) | undefined;
     const run = vi.fn(async (_model: string, _input: Record<string, unknown>) => new ReadableStream({

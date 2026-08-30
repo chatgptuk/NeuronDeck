@@ -26,10 +26,11 @@ NeuronDeck 把 Cloudflare 托管的对话模型、多模态输入、图片生成
 
 - 29 个 Cloudflare 托管的对话模型，支持搜索、能力筛选、收藏、上下文大小与价格排序
 - 中文与英文界面，默认浅色外观，并可持久化切换主题
-- 真正的 SSE 流式生成，支持停止、重新生成、复制与“从这里编辑”
+- 真正的 SSE 流式生成；生成事件由 Durable Object 临时保存，刷新、切后台或短暂断网后可从游标续传
 - 视觉模型支持图片输入；支持 PDF、Word、表格、HTML、XML、OpenDocument 与 Numbers 等附件
 - Markdown、GitHub 风格表格、代码高亮、代码复制与推理过程渲染
 - 通过 Function Calling 调用 FLUX.2 Klein 9B、FLUX.2 Dev、Lucid Origin 与 Phoenix 1.0 生图
+- 支持基于上一张真实图片进行编辑、变体与最多四图参考；参考图任务自动使用 FLUX.2 Dev
 - AI 消息可按需朗读：默认自然音质优先，英语/西班牙语使用 Aura-2，中文与其他语言使用设备系统声线
 - 生图自动选择返回通道：默认直接返回浏览器；配置 R2 与 Workflows 后可承接耗时任务，并在持久化不可用时自动回退
 - 根据模型能力设置合理的最大输出 Token，并提供对话级系统提示词、温度与输出上限
@@ -40,17 +41,17 @@ NeuronDeck 把 Cloudflare 托管的对话模型、多模态输入、图片生成
 
 ## 一键部署
 
-点击上方的 **Deploy to Cloudflare** 按钮，登录 Cloudflare 和 GitHub 后即可创建一份属于你的仓库与 Worker。Cloudflare 会读取根目录的 `wrangler.jsonc`，为新部署配置 Workers AI 并自动创建 KV；应用默认发布到部署者自己的 `workers.dev` 地址，不会绑定 `ai.chatgpt.org.uk`，也不会连接本项目的生产资源。
+点击上方的 **Deploy to Cloudflare** 按钮，登录 Cloudflare 和 GitHub 后即可创建一份属于你的仓库与 Worker。Cloudflare 会读取根目录的 `wrangler.jsonc`，为新部署配置 Workers AI、Durable Objects 与 KV；应用默认发布到部署者自己的 `workers.dev` 地址，不会绑定 `ai.chatgpt.org.uk`，也不会连接本项目的生产资源。
 
-默认部署**不要求开通 R2**。图片生成完成后会随当前请求直接返回浏览器；包括 FLUX.2 Dev 在内的生图模型都可使用，但页面必须保持请求连接，刷新后无法恢复尚未返回的图片。若配置了 R2 与 Workflows，程序会优先使用可恢复的后台任务；R2 未配置、Workflow 无法启动或 R2 写入失败时，会自动退化为直接返回。
+默认部署**不要求开通 R2**。聊天与生图在独立的 Durable Object 会话中继续执行，浏览器刷新、切到后台或短暂断网后会按事件游标补回遗漏内容。生成中的事件最多临时保留 24 小时，长期对话历史仍只保存在浏览器。若额外配置 R2 与 Workflows，FLUX.2 Dev 会使用更适合耗时任务的持久化通道；R2 未配置、Workflow 无法启动或 R2 写入失败时，会自动退化为会话内直接返回。
 
 一键部署后的默认模式会使用 **Worker 所属 Cloudflare 账户** 的 Workers AI 额度。Cloudflare OAuth 用户登录不会自动启用，因为每个部署都必须拥有自己的 OAuth 客户端、回调域名与会话密钥。
 
 Cloudflare 文档：[Deploy to Cloudflare 按钮](https://developers.cloudflare.com/workers/platform/deploy-buttons/) · [Wrangler 自动配置资源](https://developers.cloudflare.com/workers/wrangler/configuration/#automatic-provisioning)
 
-### 可选：启用可恢复的后台生图
+### 可选：启用 Workflow/R2 后台生图
 
-需要在切到后台、断线或刷新后继续查询 FLUX.2 Dev 结果时，先在 Cloudflare 账户启用 R2，再在自己的 Wrangler 配置中加入以下绑定。完整示例见 [`wrangler.production.example.jsonc`](./wrangler.production.example.jsonc)：
+需要为耗时的 FLUX.2 Dev 任务增加独立 Workflow 重试和 R2 结果暂存时，先在 Cloudflare 账户启用 R2，再在自己的 Wrangler 配置中加入以下绑定。普通的刷新、切后台和短暂断线续传由默认 Durable Object 会话处理，不要求 R2。完整示例见 [`wrangler.production.example.jsonc`](./wrangler.production.example.jsonc)：
 
 ```jsonc
 "r2_buckets": [
@@ -161,7 +162,7 @@ wrangler dev --port 8787
 
 ## 手动部署
 
-`wrangler.jsonc` 是不强制依赖 R2 的可移植公开模板：它启用 `workers.dev`，并让 Wrangler 为当前账户自动配置 Workers AI 与 KV。需要可恢复后台生图时，再按上文增加 R2 与 Workflows 绑定。
+`wrangler.jsonc` 是不强制依赖 R2 的可移植公开模板：它启用 `workers.dev`，并让 Wrangler 为当前账户配置 Workers AI、Durable Objects 与 KV。需要 Workflow/R2 后台生图时，再按上文增加相应绑定。
 
 ```bash
 command -v wrangler
@@ -198,7 +199,7 @@ Cloudflare Worker
 ├── 模型白名单、输入校验与真正的 SSE 转发
 ├── Workers AI Binding / 公共凭证池 / 用户授权后的 REST API
 ├── Function Calling、按需语音合成与自动退化的图片返回
-├── KV 加密 OAuth 会话 · 可选 Workflow/R2 图片结果 · Rate Limiting
+├── Durable Object 流式续传 · KV 加密 OAuth 会话 · 可选 Workflow/R2 图片结果
 └── Workers Static Assets
 ```
 

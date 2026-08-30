@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   extractLegacyImageContext,
+  getImageReferencesForRequest,
   getMessageContentForRequest,
   getRetainedImageContextForRequest,
   stripInternalImageContext,
@@ -28,11 +29,17 @@ describe("chat image context", () => {
 
     expect(getMessageContentForRequest(message)).toBe("图片已经完成。");
     expect(getRetainedImageContextForRequest(message)).toEqual({
+      imageId: "image-1",
       modelName: "FLUX",
       prompt: "A candid street portrait in warm autumn light",
       width: 768,
       height: 1344,
     });
+    expect(getImageReferencesForRequest([message])).toEqual([{
+      id: "image-1",
+      dataUrl: "data:image/png;base64,abc",
+      prompt: "A candid street portrait in warm autumn light",
+    }]);
   });
 
   it("does not alter ordinary messages", () => {

@@ -19,6 +19,20 @@
   "ai": {
     "binding": "AI"
   },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "CHAT_SESSIONS",
+        "class_name": "ChatSession"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1-chat-sessions",
+      "new_sqlite_classes": ["ChatSession"]
+    }
+  ],
   "kv_namespaces": [
     {
       "binding": "AUTH_SESSIONS",

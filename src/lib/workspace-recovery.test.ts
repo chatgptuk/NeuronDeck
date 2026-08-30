@@ -31,4 +31,13 @@ describe("workspace recovery", () => {
 
     expect(recoverInterruptedMessage(pending, "Generation was interrupted.")).toEqual(pending);
   });
+
+  it("keeps a resumable chat session streaming after refresh", () => {
+    const pending = message({ generationSessionId: "session-1", streamCursor: 12 });
+
+    expect(recoverInterruptedMessage(pending, "Generation was interrupted.")).toEqual({
+      ...pending,
+      recoveryState: "recovering",
+    });
+  });
 });

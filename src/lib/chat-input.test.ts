@@ -56,6 +56,7 @@ describe("multimodal chat input", () => {
         role: "assistant",
         content: "图片已经完成。",
         retainedImageContext: {
+          imageId: "image-cat",
           modelName: "FLUX.2 Dev",
           prompt: "A fluffy orange cat",
           width: 1024,
@@ -70,6 +71,7 @@ describe("multimodal chat input", () => {
     const built = buildAiMessages(result.messages, false);
     expect(built.messages[1].content).toBe("图片已经完成。");
     expect(built.retainedImageContext).toEqual({
+      imageId: "image-cat",
       modelName: "FLUX.2 Dev",
       prompt: "A fluffy orange cat",
       width: 1024,
