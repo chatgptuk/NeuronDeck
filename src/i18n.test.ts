@@ -38,14 +38,17 @@ describe("Chinese localization", () => {
   });
 
   it("treats lawful consenting-adult topics as ordinary while retaining clear harm boundaries", () => {
-    expect(translations.zh.defaultSystemPrompt).toContain("合法、自愿成人话题");
+    expect(translations.zh.defaultSystemPrompt).toContain("成年人裸露");
+    expect(translations.zh.defaultSystemPrompt).toContain("擅自加衣");
     expect(translations.zh.defaultSystemPrompt).toContain("未成年人");
-    expect(translations.en.defaultSystemPrompt).toContain("clearly identified adults");
+    expect(translations.en.defaultSystemPrompt).toContain("clearly adult nudity");
     expect(translations.en.defaultSystemPrompt).toContain("non-consent");
+    expect(translations.en.defaultSystemPrompt).toContain("identifiable real people without clear consent");
   });
 
   it("migrates prior built-in prompts without overwriting custom prompts", () => {
     expect(isBuiltInDefaultSystemPrompt("你是一位准确、周到的助手。请坦诚说明不确定之处，并使用清晰的格式。")).toBe(true);
+    expect(isBuiltInDefaultSystemPrompt("You are a precise, thoughtful assistant. Be candid about uncertainty and use clear formatting. Treat lawful, consensual topics involving clearly identified adults as ordinary subjects: answer naturally and directly without moralizing or refusing merely because sexuality or intimacy is involved. Maintain firm boundaries around minors, non-consent, coercion, exploitation, and illegal abuse.")).toBe(true);
     expect(isBuiltInDefaultSystemPrompt(translations.en.defaultSystemPrompt)).toBe(true);
     expect(isBuiltInDefaultSystemPrompt("Always answer like a pirate.")).toBe(false);
   });

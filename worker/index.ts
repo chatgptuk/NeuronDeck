@@ -174,7 +174,9 @@ const adultTopicPolicyMessage = {
   content:
     "Treat lawful topics involving clearly consenting adults—including sexual health, relationships, intimacy, and consensual adult erotic content—as ordinary topics. " +
     "Answer directly and helpfully without moralizing, unnecessary warnings, or blanket refusals merely because the subject is sexual or adult. " +
-    "Maintain firm boundaries for sexual content involving minors or age-ambiguous persons, non-consensual acts, coercion, exploitation, trafficking, or other illegal abuse. " +
+    "Lawful, consensual depictions of clearly adult nudity, including artistic or erotic nudity and transparent or revealing clothing, fall within this rule. " +
+    "Do not refuse, euphemize, add clothing, or otherwise sanitize a request merely because clearly adult nudity is present; for image requests, faithfully pass the requested level of nudity to the image tool. " +
+    "Maintain firm boundaries for sexual content involving minors or age-ambiguous persons, non-consensual acts, coercion, exploitation, trafficking, other illegal abuse, or nude/sexualized depictions of identifiable real people without clear consent. " +
     "When a safe adjacent answer is possible, provide it instead of a vague refusal.",
 };
 
@@ -1324,6 +1326,7 @@ const imageToolDefinition = {
       "Use this whenever the user asks to create, draw, illustrate, design, render, visualize, or make a visual artifact such as a poster, icon, scene, product shot, or artwork. " +
       "Use edit or variation when the user asks to change, restyle, remake, or make another version of a previous image; use multi_reference when several available images should be combined. " +
       "Equivalent requests in any language should trigger it. Do not use it merely to analyze or discuss an existing image. " +
+      "Do not refuse or silently add clothing solely because a lawful request includes clearly adult nudity or transparent/revealing clothing. Preserve the requested level of nudity when every depicted person is clearly adult and the request does not involve minors, age-ambiguous people, non-consent, exploitation, or an identifiable real person without clear consent. " +
       "Write a detailed, self-contained generation prompt that preserves the user's requested subject, style, composition, mood, and visible text.",
     parameters: {
       type: "object",
@@ -1935,6 +1938,7 @@ const handleToolChat = (
             "A referential follow-up asking for another result, a variation, a remake, or a changed version of a previously generated visual is also creation intent; infer a self-contained prompt from the conversation and retained image-tool context. " +
             "For those follow-ups, call the tool with edit or variation and the relevant reference image IDs. The application will pass the real image pixels to the image model; never pretend an edit happened without the tool. " +
             "If the user requests multiple distinct images, call generate_image once for every requested image (up to four), with a complete prompt for each. " +
+            "For lawful requests involving clearly adult nudity or transparent/revealing clothing, do not refuse, moralize, or secretly add clothing; call generate_image with a faithful prompt unless the request involves minors, age ambiguity, non-consent, exploitation, or an identifiable real person without clear consent. " +
             "Use search_web for current, recent, externally verifiable, or web-specific questions, then use open_webpage on the most relevant results before answering. " +
             "Use capture_screenshot when the user asks to screenshot, preview, or send an image of a public webpage. The real screenshot will be displayed automatically; never claim screenshots are unavailable when this tool can be used. " +
             "Use create_file whenever the user asks for a downloadable TXT, Markdown, PDF, CSV, or JSON file. Put the complete requested content in the tool call, call it once per requested file, and never pretend a file exists without a successful tool result. " +

@@ -847,6 +847,8 @@ describe("chat streaming", () => {
     }
     expect(run).toHaveBeenCalledOnce();
     expect(JSON.stringify(modelInput)).toContain("clearly consenting adults");
+    expect(JSON.stringify(modelInput)).toContain("clearly adult nudity");
+    expect(JSON.stringify(modelInput)).toContain("identifiable real people without clear consent");
     expect(JSON.stringify(modelInput)).toContain("minors or age-ambiguous persons");
   });
 });
@@ -910,6 +912,8 @@ describe("image generation function calling", () => {
     const finalRoundMessages = calls[3].input.messages as Array<{ role?: string; content?: string }>;
 
     expect(calls.map((call) => call.model)).toEqual([chatModel, imageModel, imageModel, chatModel]);
+    expect(JSON.stringify(calls[0].input.tools)).toContain("Do not refuse or silently add clothing");
+    expect(JSON.stringify(calls[0].input.messages)).toContain("do not refuse, moralize, or secretly add clothing");
     expect((body.match(/"generated_image"/g) ?? [])).toHaveLength(2);
     expect(finalRoundMessages.filter((message) => message.role === "tool")).toHaveLength(2);
     expect(finalRoundMessages.filter((message) => message.role === "tool").every((message) => message.content?.includes('"ok":true'))).toBe(true);
