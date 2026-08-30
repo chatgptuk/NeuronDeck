@@ -1200,8 +1200,8 @@ interface NormalizedToolCall {
   legacy: boolean;
 }
 
-const MAX_TOOL_ROUNDS = 5;
-const MAX_TOOL_CALLS = 10;
+const MAX_TOOL_ROUNDS = 10;
+const MAX_TOOL_CALLS = 20;
 const MAX_IMAGES_PER_TURN = 4;
 const MAX_BROWSER_CALLS_PER_TURN = 4;
 const MAX_FILES_PER_TURN = 4;
@@ -1432,6 +1432,19 @@ const parseToolArguments = (value: unknown): ToolArguments => {
     return {};
   }
 };
+
+const canonicalToolValue = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(canonicalToolValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, nested]) => [key, canonicalToolValue(nested)]),
+  );
+};
+
+const toolCallSignature = (call: NormalizedToolCall): string =>
+  `${call.name}:${JSON.stringify(canonicalToolValue(call.arguments))}`;
 
 const extractToolCalls = (result: unknown): NormalizedToolCall[] => {
   if (!result || typeof result !== "object") return [];
@@ -1922,6 +1935,7 @@ const handleToolChat = (
             "Do not call it for ordinary questions, coding requests, or analysis of an existing image. " +
             "When no tool is needed, answer the user directly and normally in this same response. " +
             "After tool results arrive, continue reasoning and either call another needed tool or give a concise final answer. " +
+            "A successful tool result means that action is complete. Never repeat an identical successful tool call in a later round; answer the user or choose a materially different next action. " +
             "Never expose internal application context or claim an image, file, or web lookup occurred without the corresponding tool result.",
         },
         ...(retainedImageContext ? [retainedImageContextMessage(retainedImageContext)] : []),
@@ -2396,8 +2410,23 @@ const handleToolChat = (
         ];
         let totalToolCalls = 0;
         let finished = false;
+        const successfulToolSignatures = new Set<string>();
+        const successfulToolNames = new Set<string>();
 
-        const executeToolCall = async (call: NormalizedToolCall): Promise<string> => {
+        const executeToolCall = async (
+          call: NormalizedToolCall,
+          successfulBeforeRound: ReadonlySet<string>,
+        ): Promise<{ result: string; success: boolean; signature: string; reused: boolean }> => {
+          const signature = toolCallSignature(call);
+          if (successfulBeforeRound.has(signature)) {
+            const result = JSON.stringify({
+              ok: true,
+              reused: true,
+              instruction:
+                "This exact tool action already completed successfully earlier in this turn. Do not call it again; give the final answer or choose a materially different next action.",
+            });
+            return { result, success: true, signature, reused: true };
+          }
           send({ tool_activity: { status: "started", name: call.name } });
           let result: string;
           if (call.name === "generate_image") {
@@ -2420,7 +2449,7 @@ const handleToolChat = (
             // Tool results are expected to be JSON; malformed output remains a failed tool call.
           }
           send({ tool_activity: { status: "complete", name: call.name, success } });
-          return result;
+          return { result, success, signature, reused: false };
         };
 
         for (let round = 0; round < MAX_TOOL_ROUNDS && !cancelled; round += 1) {
@@ -2479,6 +2508,7 @@ const handleToolChat = (
             throw new Error(`The model exceeded the ${MAX_TOOL_CALLS}-tool limit for one turn.`);
           }
           totalToolCalls += toolCalls.length;
+          const successfulBeforeRound = new Set(successfulToolSignatures);
           toolMessages.push({
             role: "assistant",
             content: roundContent || null,
@@ -2490,12 +2520,16 @@ const handleToolChat = (
           });
           for (const call of toolCalls) {
             if (cancelled) return;
-            const result = await executeToolCall(call);
+            const outcome = await executeToolCall(call, successfulBeforeRound);
+            if (outcome.success) {
+              successfulToolNames.add(call.name);
+              if (!outcome.reused) successfulToolSignatures.add(outcome.signature);
+            }
             toolMessages.push({
               role: "tool",
               tool_call_id: call.id,
               name: call.name,
-              content: result,
+              content: outcome.result,
             });
           }
         }
@@ -2504,9 +2538,55 @@ const handleToolChat = (
           send({ web_research: { status: "complete" } });
         }
         if (!cancelled && !finished) {
-          const message = prefersChinese
-            ? "已完成可执行的工具步骤，但模型没有在限定轮数内给出最终回复。"
-            : "The available tool steps completed, but the model did not provide a final reply within the tool-round limit.";
+          try {
+            const finalResult = await ai.run(modelId, {
+              messages: [
+                ...toolMessages,
+                {
+                  role: "system",
+                  content:
+                    "Tool execution is now complete and no more tools are available in this turn. " +
+                    "Using the tool results already present, give the user a concise final answer now. " +
+                    "Do not request another tool call, do not expose internal tool protocol, and clearly mention any tool failure that prevents the requested result.",
+                },
+              ],
+              temperature,
+              max_tokens: maxTokens,
+              stream: true,
+            });
+            let finalContent = "";
+            if (finalResult instanceof ReadableStream) {
+              const streamed = await consumeToolAwareModelStream(finalResult, (event) => {
+                if (event.error) throw new Error(event.error);
+                if (event.reasoning) send({ reasoning: event.reasoning });
+                if (event.content) send({ response: event.content });
+                if (event.usage) send({ usage: event.usage });
+              }, () => cancelled);
+              finalContent = streamed.content;
+            } else {
+              const completion = extractCompletion(finalResult);
+              finalContent = completion.content;
+              if (completion.reasoning) send({ reasoning: completion.reasoning });
+              if (completion.content) send({ response: completion.content });
+              if (completion.usage) send({ usage: completion.usage });
+            }
+            finished = finalContent.trim().length > 0;
+          } catch (error) {
+            console.warn("The forced final tool summary failed.", {
+              model: modelId,
+              message: error instanceof Error ? error.message : "Unknown finalization error",
+            });
+          }
+        }
+        if (!cancelled && !finished) {
+          const completed = [...successfulToolNames];
+          const message = completed.length
+            ? prefersChinese
+              ? "请求中的工具操作已经完成，结果已显示在上方。"
+              : "The requested tool actions completed and their results are shown above."
+            : prefersChinese
+              ? "模型未能完成这次工具请求，请重试或换一个支持工具调用的模型。"
+              : "The model could not complete this tool request. Try again or choose another tool-capable model.";
           send({ response: message });
         } else if (imageInvocationFailed && !imageInvocationSucceeded) {
           const message = prefersChinese

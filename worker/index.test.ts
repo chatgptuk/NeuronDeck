@@ -910,6 +910,119 @@ describe("image generation function calling", () => {
     expect(body).toContain("两张图片都生成好了");
   });
 
+  it("reuses identical successful calls from earlier rounds without collapsing same-round requests", async () => {
+    const chatInputs: Array<Record<string, unknown>> = [];
+    let imageCalls = 0;
+    let chatRound = 0;
+    const repeatedCall = (id: string) => ({
+      id,
+      type: "function",
+      function: {
+        name: "generate_image",
+        arguments: JSON.stringify({ prompt: "Two intentionally matching green spheres", operation: "generate" }),
+      },
+    });
+    const ai = {
+      run: vi.fn(async (model: string, input: Record<string, unknown>) => {
+        if (model === imageModel) {
+          imageCalls += 1;
+          return { image: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB" };
+        }
+        chatInputs.push(input);
+        chatRound += 1;
+        if (chatRound === 1) {
+          return { choices: [{ message: { tool_calls: [repeatedCall("same-round-one"), repeatedCall("same-round-two")] } }] };
+        }
+        if (chatRound === 2) {
+          return { choices: [{ message: { tool_calls: [repeatedCall("later-repeat")] } }] };
+        }
+        return { response: "两张相同构图的图片已经生成。" };
+      }),
+      toMarkdown: vi.fn(),
+    };
+    const response = await worker.fetch(new Request("https://ai.chatgpt.org.uk/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "accept-language": "zh-CN",
+        "x-neurondeck-client": "test-client-1234",
+      },
+      body: JSON.stringify({
+        model: chatModel,
+        imageModel,
+        messages: [{ role: "user", content: "生成两张完全相同构图的绿色球体" }],
+      }),
+    }), {
+      AI: ai,
+      ASSETS: { fetch: vi.fn() },
+      CHAT_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+    } as never);
+    const body = await response.text();
+    const finalMessages = chatInputs[2].messages as Array<{ role?: string; content?: string }>;
+
+    expect(imageCalls).toBe(2);
+    expect((body.match(/"generated_image"/g) ?? [])).toHaveLength(2);
+    expect(finalMessages.some((message) => message.role === "tool" && message.content?.includes('"reused":true'))).toBe(true);
+    expect(body).toContain("两张相同构图的图片已经生成");
+  });
+
+  it("allows ten tool rounds and then forces a final tool-free response", async () => {
+    const chatInputs: Array<Record<string, unknown>> = [];
+    let chatRound = 0;
+    const ai = {
+      run: vi.fn(async (_model: string, input: Record<string, unknown>) => {
+        chatInputs.push(input);
+        if (!("tools" in input)) {
+          return new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('data: {"response":"工具阶段结束后的最终回复。"}\n\ndata: [DONE]\n\n'));
+              controller.close();
+            },
+          });
+        }
+        chatRound += 1;
+        return {
+          choices: [{ message: { tool_calls: [{
+            id: `web-round-${chatRound}`,
+            type: "function",
+            function: {
+              name: "open_webpage",
+              arguments: JSON.stringify({ url: `https://example.com/page-${chatRound}` }),
+            },
+          }] } }],
+        };
+      }),
+      toMarkdown: vi.fn(),
+    };
+    const response = await worker.fetch(new Request("https://ai.chatgpt.org.uk/api/chat", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "accept-language": "zh-CN",
+        "x-neurondeck-client": "test-client-1234",
+      },
+      body: JSON.stringify({
+        model: chatModel,
+        imageModel,
+        messages: [{ role: "user", content: "完成一个需要很多工具步骤的任务" }],
+      }),
+    }), {
+      AI: ai,
+      ASSETS: { fetch: vi.fn() },
+      CHAT_RATE_LIMITER: { limit: vi.fn(async () => ({ success: true })) },
+    } as never);
+    const body = await response.text();
+    const forcedFinalInput = chatInputs.at(-1)!;
+
+    expect(chatRound).toBe(10);
+    expect(chatInputs).toHaveLength(11);
+    expect(forcedFinalInput).not.toHaveProperty("tools");
+    expect(forcedFinalInput).not.toHaveProperty("tool_choice");
+    expect(JSON.stringify(forcedFinalInput.messages)).toContain("no more tools are available");
+    expect(body).toContain("工具阶段结束后的最终回复");
+    expect(body).not.toContain("限定轮数");
+  });
+
   it("uses the real previous image pixels for edit requests and transparently selects FLUX.2 Dev", async () => {
     const devModel = "@cf/black-forest-labs/flux-2-dev";
     const imageCalls: Array<Record<string, unknown>> = [];
