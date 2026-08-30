@@ -37,7 +37,8 @@ NeuronDeck brings Cloudflare-hosted chat models, multimodal input, image generat
 - Browser-local IndexedDB history, mobile refinements, message timestamps, and generation duration
 - Optional public quota pool with stable distribution and automatic failover across administrator-provided Cloudflare accounts
 - Optional Cloudflare OAuth so users can authorize their own accounts and use their own Workers AI quota
-- Optional private admin dashboard for anonymous browser, activity, chat, image, speech, and generation-error metrics
+- Optional model health and cost center with per-model success rate, first-token latency, total duration, tokens, tool calls, estimated chat cost, and anonymous traffic trends
+- Installable PWA with Service Worker completion alerts for chat and image generations that finish while the page is in the background
 - Same-origin API checks, request validation, encrypted OAuth sessions, and per-minute rate limiting
 
 ## One-click deployment
@@ -148,7 +149,7 @@ wrangler secret put ADMIN_ACCOUNT_ID --config .wrangler.production.jsonc
 
 Use `wrangler.jsonc` when deploying from the portable template. Enter the deployer's 32-character Cloudflare Account ID, deploy again, connect that account, and open `https://your-domain.example/admin`. Separate multiple administrator accounts with commas.
 
-Collection starts when the dashboard is enabled and cannot reconstruct earlier traffic. “Users” are deduplicated using a random browser identifier. Only its SHA-256 hash and aggregate event counts are stored—never message content, IPs, filenames, generated images, or Cloudflare tokens. The public Wrangler configuration includes a `METRICS_DB` D1 binding; deployment auto-provisions the database and the Worker initializes its schema on first use.
+Collection starts when the dashboard is enabled and cannot reconstruct earlier traffic. “Users” are deduplicated using a random browser identifier. Only its SHA-256 hash and aggregate event counts are stored—never message content, IPs, filenames, generated images, or Cloudflare tokens. Model health storage is likewise limited to daily aggregate outcomes, latency, token, and tool-call counters. Cost is estimated from published token prices in the model catalog; image, speech, and final billing remain authoritative in the Cloudflare dashboard. The public Wrangler configuration includes a `METRICS_DB` D1 binding; deployment auto-provisions the database and the Worker initializes its schema on first use.
 
 ## Local development
 

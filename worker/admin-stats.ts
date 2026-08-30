@@ -1,9 +1,31 @@
 import { getOAuthSession, type CloudflareOAuthEnv } from "./cloudflare-oauth";
 import { hasAdminAccount, hasConfiguredAdmin } from "./admin-access";
+import catalog from "../src/data/models.generated.json";
 
 export { hasAdminAccount } from "./admin-access";
 
 export type AnalyticsEvent = "visit" | "chat" | "image" | "tts" | "error";
+export type AiFeature = "chat" | "image" | "tts";
+
+export interface ModelTelemetry {
+  feature: AiFeature;
+  modelId: string;
+  success: boolean;
+  cancelled?: boolean;
+  durationMs?: number;
+  firstTokenMs?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cachedInputTokens?: number;
+  toolCalls?: number;
+  toolSuccesses?: number;
+}
+
+export interface NormalizedTokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+}
 
 export interface AdminStatsEnv extends CloudflareOAuthEnv {
   ADMIN_ACCOUNT_ID?: string;
@@ -30,6 +52,23 @@ interface TotalsRow {
 
 interface CountRow {
   value: number;
+}
+
+interface ModelStatsRow {
+  feature: AiFeature;
+  modelId: string;
+  requests: number;
+  successes: number;
+  errors: number;
+  cancelled: number;
+  durationMs: number;
+  firstTokenMs: number;
+  firstTokenSamples: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  toolCalls: number;
+  toolSuccesses: number;
 }
 
 const schemaInitializations = new WeakMap<D1Database, Promise<void>>();
@@ -70,6 +109,24 @@ const ensureSchema = async (database: D1Database): Promise<void> => {
         tts INTEGER NOT NULL DEFAULT 0,
         errors INTEGER NOT NULL DEFAULT 0
       ) WITHOUT ROWID`),
+      database.prepare(`CREATE TABLE IF NOT EXISTS model_stats (
+        day TEXT NOT NULL,
+        feature TEXT NOT NULL,
+        model_id TEXT NOT NULL,
+        requests INTEGER NOT NULL DEFAULT 0,
+        successes INTEGER NOT NULL DEFAULT 0,
+        errors INTEGER NOT NULL DEFAULT 0,
+        cancelled INTEGER NOT NULL DEFAULT 0,
+        duration_ms INTEGER NOT NULL DEFAULT 0,
+        first_token_ms INTEGER NOT NULL DEFAULT 0,
+        first_token_samples INTEGER NOT NULL DEFAULT 0,
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+        tool_calls INTEGER NOT NULL DEFAULT 0,
+        tool_successes INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (day, feature, model_id)
+      ) WITHOUT ROWID`),
     ]).then(() => undefined).catch((error) => {
       schemaInitializations.delete(database);
       throw error;
@@ -77,6 +134,114 @@ const ensureSchema = async (database: D1Database): Promise<void> => {
     schemaInitializations.set(database, initialization);
   }
   await initialization;
+};
+
+const asRecord = (value: unknown): Record<string, unknown> | undefined =>
+  value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+
+const readNonNegativeInteger = (...values: unknown[]): number => {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value) && value >= 0) return Math.round(value);
+  }
+  return 0;
+};
+
+export const normalizeTokenUsage = (value: unknown): NormalizedTokenUsage => {
+  const usage = asRecord(value);
+  if (!usage) return { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 };
+  const promptDetails = asRecord(usage.prompt_tokens_details) ?? asRecord(usage.input_tokens_details);
+  return {
+    inputTokens: readNonNegativeInteger(usage.input_tokens, usage.prompt_tokens, usage.promptTokens),
+    outputTokens: readNonNegativeInteger(usage.output_tokens, usage.completion_tokens, usage.completionTokens),
+    cachedInputTokens: readNonNegativeInteger(
+      usage.cached_input_tokens,
+      usage.cached_tokens,
+      promptDetails?.cached_tokens,
+      promptDetails?.cachedTokens,
+    ),
+  };
+};
+
+const clampMetric = (value: number | undefined, maximum = Number.MAX_SAFE_INTEGER): number =>
+  typeof value === "number" && Number.isFinite(value)
+    ? Math.min(maximum, Math.max(0, Math.round(value)))
+    : 0;
+
+export const recordModelTelemetry = async (
+  env: AdminStatsEnv,
+  telemetry: ModelTelemetry,
+): Promise<void> => {
+  const database = env.METRICS_DB;
+  if (!database || !/^@cf\/[a-z0-9._/-]{3,180}$/i.test(telemetry.modelId)) return;
+
+  try {
+    await ensureSchema(database);
+    const day = new Date().toISOString().slice(0, 10);
+    const success = telemetry.success ? 1 : 0;
+    const cancelled = telemetry.cancelled ? 1 : 0;
+    const error = !telemetry.success && !telemetry.cancelled ? 1 : 0;
+    const durationMs = clampMetric(telemetry.durationMs, 60 * 60 * 1_000);
+    const firstTokenMs = clampMetric(telemetry.firstTokenMs, 60 * 60 * 1_000);
+    const firstTokenSamples = firstTokenMs > 0 ? 1 : 0;
+
+    await database.prepare(
+      `INSERT INTO model_stats (
+        day, feature, model_id, requests, successes, errors, cancelled,
+        duration_ms, first_token_ms, first_token_samples,
+        input_tokens, output_tokens, cached_input_tokens, tool_calls, tool_successes
+      ) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(day, feature, model_id) DO UPDATE SET
+        requests = model_stats.requests + 1,
+        successes = model_stats.successes + excluded.successes,
+        errors = model_stats.errors + excluded.errors,
+        cancelled = model_stats.cancelled + excluded.cancelled,
+        duration_ms = model_stats.duration_ms + excluded.duration_ms,
+        first_token_ms = model_stats.first_token_ms + excluded.first_token_ms,
+        first_token_samples = model_stats.first_token_samples + excluded.first_token_samples,
+        input_tokens = model_stats.input_tokens + excluded.input_tokens,
+        output_tokens = model_stats.output_tokens + excluded.output_tokens,
+        cached_input_tokens = model_stats.cached_input_tokens + excluded.cached_input_tokens,
+        tool_calls = model_stats.tool_calls + excluded.tool_calls,
+        tool_successes = model_stats.tool_successes + excluded.tool_successes`,
+    ).bind(
+      day,
+      telemetry.feature,
+      telemetry.modelId,
+      success,
+      error,
+      cancelled,
+      durationMs,
+      firstTokenMs,
+      firstTokenSamples,
+      clampMetric(telemetry.inputTokens),
+      clampMetric(telemetry.outputTokens),
+      clampMetric(telemetry.cachedInputTokens),
+      clampMetric(telemetry.toolCalls),
+      clampMetric(telemetry.toolSuccesses),
+    ).run();
+  } catch (error) {
+    console.warn("Model telemetry was not recorded", {
+      feature: telemetry.feature,
+      model: telemetry.modelId,
+      message: error instanceof Error ? error.message : "Unknown model telemetry error",
+    });
+  }
+};
+
+const modelPrices = new Map(catalog.models.map((model) => [model.id, model.prices]));
+const estimateChatCost = (row: ModelStatsRow): number => {
+  if (row.feature !== "chat") return 0;
+  const prices = modelPrices.get(row.modelId);
+  if (!prices) return 0;
+  const cachedTokens = Math.min(row.inputTokens, row.cachedInputTokens);
+  const regularInputTokens = Math.max(0, row.inputTokens - cachedTokens);
+  return (
+    regularInputTokens * (prices.input ?? 0) +
+    cachedTokens * (prices.cachedInput ?? prices.input ?? 0) +
+    row.outputTokens * (prices.output ?? 0)
+  ) / 1_000_000;
 };
 
 const hashClientId = async (clientId: string): Promise<string> => {
@@ -168,7 +333,7 @@ export const handleAdminStatsRoute = async (
     const timestamp = Date.now();
     const today = new Date(timestamp).toISOString().slice(0, 10);
     const start30 = new Date(timestamp - 29 * 24 * 60 * 60 * 1_000).toISOString().slice(0, 10);
-    const [totalVisitors, activeToday, active7Days, active30Days, totalsResult, dailyResult] = await database.batch([
+    const [totalVisitors, activeToday, active7Days, active30Days, totalsResult, dailyResult, modelStatsResult] = await database.batch([
       database.prepare("SELECT COUNT(*) AS value FROM visitors"),
       database.prepare("SELECT COUNT(*) AS value FROM daily_visitors WHERE day = ?").bind(today),
       database.prepare("SELECT COUNT(*) AS value FROM visitors WHERE last_seen >= ?").bind(timestamp - 7 * 24 * 60 * 60 * 1_000),
@@ -197,10 +362,39 @@ export const handleAdminStatsRoute = async (
          GROUP BY stats.day, stats.visits, stats.chats, stats.images, stats.tts, stats.errors
          ORDER BY stats.day ASC`,
       ).bind(start30),
+      database.prepare(
+        `SELECT
+          feature AS feature,
+          model_id AS modelId,
+          COALESCE(SUM(requests), 0) AS requests,
+          COALESCE(SUM(successes), 0) AS successes,
+          COALESCE(SUM(errors), 0) AS errors,
+          COALESCE(SUM(cancelled), 0) AS cancelled,
+          COALESCE(SUM(duration_ms), 0) AS durationMs,
+          COALESCE(SUM(first_token_ms), 0) AS firstTokenMs,
+          COALESCE(SUM(first_token_samples), 0) AS firstTokenSamples,
+          COALESCE(SUM(input_tokens), 0) AS inputTokens,
+          COALESCE(SUM(output_tokens), 0) AS outputTokens,
+          COALESCE(SUM(cached_input_tokens), 0) AS cachedInputTokens,
+          COALESCE(SUM(tool_calls), 0) AS toolCalls,
+          COALESCE(SUM(tool_successes), 0) AS toolSuccesses
+        FROM model_stats
+        WHERE day >= ?
+        GROUP BY feature, model_id
+        ORDER BY requests DESC, model_id ASC`,
+      ).bind(start30),
     ]);
 
     const totals = totalsResult.results[0] as unknown as TotalsRow | undefined;
     const daily = dailyResult.results as unknown as DailyStatsRow[];
+    const modelHealth = (modelStatsResult.results as unknown as ModelStatsRow[]).map((row) => ({
+      ...row,
+      successRate: row.requests ? row.successes / row.requests : 0,
+      averageDurationMs: row.requests ? Math.round(row.durationMs / row.requests) : 0,
+      averageFirstTokenMs: row.firstTokenSamples ? Math.round(row.firstTokenMs / row.firstTokenSamples) : 0,
+      toolSuccessRate: row.toolCalls ? row.toolSuccesses / row.toolCalls : 0,
+      estimatedCostUsd: estimateChatCost(row),
+    }));
     return json({
       generatedAt: new Date(timestamp).toISOString(),
       timezone: "UTC",
@@ -211,6 +405,11 @@ export const handleAdminStatsRoute = async (
         thirtyDays: readCount(active30Days as D1Result<CountRow>),
       },
       totals: totals ?? { visits: 0, chats: 0, images: 0, tts: 0, errors: 0 },
+      modelHealth: {
+        periodDays: 30,
+        estimatedChatCostUsd: modelHealth.reduce((total, row) => total + row.estimatedCostUsd, 0),
+        rows: modelHealth,
+      },
       daily,
     });
   } catch (error) {

@@ -37,7 +37,8 @@ NeuronDeck 把 Cloudflare 托管的对话模型、多模态输入、图片生成
 - IndexedDB 本地对话历史、移动端优化、消息时间与生成耗时
 - 可选站点公共额度池：管理员可安全接入多个 Cloudflare 账户，自动分流并在额度故障时切换
 - 可选 Cloudflare OAuth：用户可授权自己的账户并使用自己的 Workers AI 额度
-- 可选私有管理后台：匿名统计独立浏览器、活跃趋势、聊天、生图、语音与生成错误
+- 可选“模型健康与成本中心”：按模型统计成功率、首字耗时、总耗时、Token、工具调用和估算聊天成本，并保留匿名访问趋势
+- PWA 安装与生成完成提醒：可添加到主屏幕/作为独立应用运行，页面在后台时由 Service Worker 提醒聊天或生图已经完成
 - 同源 API 校验、请求验证、加密 OAuth 会话与每分钟请求限制
 
 ## 一键部署
@@ -148,7 +149,7 @@ wrangler secret put ADMIN_ACCOUNT_ID --config .wrangler.production.jsonc
 
 使用公开模板时将配置路径换成 `wrangler.jsonc`。输入部署者的 32 位 Cloudflare Account ID 后重新部署，再使用该账户连接 Cloudflare 并打开 `https://你的域名/admin`。多个管理员账户可用英文逗号分隔。
 
-统计从启用后台后开始累计，不能还原此前的访问量。“用户”按浏览器生成的随机标识去重；服务端只保存其 SHA-256 哈希和聚合事件数量，不记录消息内容、IP、文件名、生成图片或 Cloudflare Token。公开 Wrangler 配置已包含 `METRICS_DB` D1 绑定，部署时会自动创建数据库，表结构由 Worker 首次使用时初始化。
+统计从启用后台后开始累计，不能还原此前的访问量。“用户”按浏览器生成的随机标识去重；服务端只保存其 SHA-256 哈希和聚合事件数量，不记录消息内容、IP、文件名、生成图片或 Cloudflare Token。模型健康指标同样只保存按天聚合的请求结果、延迟、Token 和工具调用计数。成本按模型目录中的公开 Token 单价估算，图片、语音及 Cloudflare 最终账单仍以 Cloudflare 控制台为准。公开 Wrangler 配置已包含 `METRICS_DB` D1 绑定，部署时会自动创建数据库，表结构由 Worker 首次使用时初始化。
 
 ## 本地开发
 

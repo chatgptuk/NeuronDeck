@@ -1,6 +1,7 @@
 import {
   Archive,
   AudioLines,
+  Bell,
   Check,
   ChevronDown,
   Cloud,
@@ -72,6 +73,15 @@ import { getClientId } from "./lib/client-id";
 import { recordAnonymousVisit } from "./lib/metrics";
 import { recoverInterruptedMessage } from "./lib/workspace-recovery";
 import { formatElapsedDuration, formatMessageTimestamp } from "./lib/time";
+import {
+  enableGenerationNotifications,
+  isInstalledPwa,
+  notifyGenerationComplete,
+  readGenerationNotificationState,
+  registerNeuronDeckServiceWorker,
+  type BeforeInstallPromptEvent,
+  type GenerationNotificationState,
+} from "./lib/pwa";
 import {
   prepareSpeechText,
   resolveSpeechRequest,
@@ -251,6 +261,11 @@ function App() {
   const [speechMode, setSpeechMode] = useState<SpeechMode>(
     () => resolveStoredSpeechMode(localStorage.getItem("neurondeck-speech-mode")),
   );
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [pwaInstalled, setPwaInstalled] = useState(() => isInstalledPwa());
+  const [notificationState, setNotificationState] = useState<GenerationNotificationState>(
+    () => readGenerationNotificationState(),
+  );
   const [speechPlayback, setSpeechPlayback] = useState<SpeechPlayback | null>(null);
   const [speechError, setSpeechError] = useState<{ messageId: string; message: string } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -294,6 +309,24 @@ function App() {
   useEffect(() => {
     localStorage.setItem("neurondeck-speech-mode", speechMode);
   }, [speechMode]);
+
+  useEffect(() => {
+    void registerNeuronDeckServiceWorker();
+    const handleInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as BeforeInstallPromptEvent);
+    };
+    const handleInstalled = () => {
+      setPwaInstalled(true);
+      setInstallPrompt(null);
+    };
+    window.addEventListener("beforeinstallprompt", handleInstallPrompt);
+    window.addEventListener("appinstalled", handleInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleInstallPrompt);
+      window.removeEventListener("appinstalled", handleInstalled);
+    };
+  }, []);
 
   useEffect(() => {
     recordAnonymousVisit();
@@ -458,6 +491,18 @@ function App() {
     window.location.assign("/api/auth/cloudflare/start");
   };
 
+  const installPwa = async () => {
+    if (!installPrompt) return;
+    await installPrompt.prompt();
+    const choice = await installPrompt.userChoice;
+    if (choice.outcome === "accepted") setPwaInstalled(true);
+    setInstallPrompt(null);
+  };
+
+  const enableNotifications = async () => {
+    setNotificationState(await enableGenerationNotifications());
+  };
+
   const changeCloudflareAccount = async (accountId: string) => {
     setCloudflareAuthBusy(true);
     setCloudflareAuthError(null);
@@ -555,6 +600,7 @@ function App() {
             },
             status: "complete",
           }));
+          void notifyGenerationComplete(language, "image");
         }).catch((error) => {
           if (controller.signal.aborted) return;
           updateMessage(conversation.id, message.id, (current) => ({
@@ -615,6 +661,7 @@ function App() {
           },
           status: "streaming",
         }));
+        void notifyGenerationComplete(language, "image");
         return true;
       };
 
@@ -759,6 +806,9 @@ function App() {
           streamCursor,
           recoveryState: undefined,
         }));
+        if (!cancelledByServer) {
+          void notifyGenerationComplete(language, generatedImages.length ? "image" : "chat");
+        }
       } catch (error) {
         const stopped = error instanceof DOMException && error.name === "AbortError";
         if (!stopped && pendingImageJobId) {
@@ -1702,6 +1752,35 @@ function App() {
               </div>
               {cloudflareAuthError ? <p className="cloudflare-auth-error" role="alert">{cloudflareAuthError}</p> : null}
               <p className="cloudflare-auth-privacy">{t.cloudflareAccountPrivacy}</p>
+            </div>
+            <div className="inspector-section pwa-section">
+              <span className="section-title"><Bell size={15} />{t.pwaTitle}</span>
+              <p>{t.pwaDescription}</p>
+              <div className="pwa-actions">
+                <button
+                  type="button"
+                  disabled={pwaInstalled || !installPrompt}
+                  onClick={() => void installPwa()}
+                >
+                  <Download size={15} />
+                  {pwaInstalled ? t.pwaInstalled : installPrompt ? t.pwaInstall : t.pwaInstallUnavailable}
+                </button>
+                <button
+                  type="button"
+                  className={notificationState === "enabled" ? "enabled" : ""}
+                  disabled={notificationState === "unsupported" || notificationState === "denied" || notificationState === "enabled"}
+                  onClick={() => void enableNotifications()}
+                >
+                  <Bell size={15} />
+                  {notificationState === "enabled"
+                    ? t.notificationsEnabled
+                    : notificationState === "denied"
+                      ? t.notificationsDenied
+                      : notificationState === "unsupported"
+                        ? t.notificationsUnsupported
+                        : t.notificationsEnable}
+                </button>
+              </div>
             </div>
             <div className="inspector-section">
               <label htmlFor="system-prompt"><Settings2 size={14} />{t.systemPrompt}</label>

@@ -7,7 +7,9 @@ import {
 } from "./cloudflare-oauth";
 import {
   handleAdminStatsRoute,
+  normalizeTokenUsage,
   recordAnalyticsEvent,
+  recordModelTelemetry,
   type AdminStatsEnv,
 } from "./admin-stats";
 import { hasAdminAccount } from "./admin-access";
@@ -1339,6 +1341,122 @@ const extractModelStreamEvent = (value: unknown): ModelStreamEvent => {
   };
 };
 
+const instrumentModelResponse = (
+  response: Response,
+  env: Env,
+  modelId: string,
+): Response => {
+  if (!response.body) return response;
+  const upstream = response.body.getReader();
+  const startedAt = Date.now();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let completed = false;
+  let failed = false;
+  let cancelled = false;
+  let firstTokenMs = 0;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cachedInputTokens = 0;
+  let toolCalls = 0;
+  let toolSuccesses = 0;
+  let recorded = false;
+
+  const record = async () => {
+    if (recorded) return;
+    recorded = true;
+    await recordModelTelemetry(env, {
+      feature: "chat",
+      modelId,
+      success: completed && !failed && !cancelled,
+      cancelled,
+      durationMs: Date.now() - startedAt,
+      firstTokenMs,
+      inputTokens,
+      outputTokens,
+      cachedInputTokens,
+      toolCalls,
+      toolSuccesses,
+    });
+  };
+
+  const inspectData = (dataText: string) => {
+    if (!dataText) return;
+    if (dataText === "[DONE]") {
+      completed = true;
+      return;
+    }
+    let payload: unknown;
+    try {
+      payload = JSON.parse(dataText);
+    } catch {
+      payload = dataText;
+    }
+    const event = extractModelStreamEvent(payload);
+    const recordPayload = asRecord(payload);
+    if (!firstTokenMs && (event.content || event.reasoning || recordPayload?.image_generation)) {
+      firstTokenMs = Math.max(1, Date.now() - startedAt);
+    }
+    if (event.error) failed = true;
+    if (event.complete || recordPayload?.done === true) completed = true;
+    if (event.usage) {
+      const usage = normalizeTokenUsage(event.usage);
+      inputTokens = Math.max(inputTokens, usage.inputTokens);
+      outputTokens = Math.max(outputTokens, usage.outputTokens);
+      cachedInputTokens = Math.max(cachedInputTokens, usage.cachedInputTokens);
+    }
+    if (recordPayload?.image_generation && !toolCalls) toolCalls = 1;
+    if (recordPayload?.generated_image && !toolSuccesses) toolSuccesses = 1;
+  };
+
+  const inspectBuffer = (flush = false) => {
+    const blocks = buffer.split(/\r?\n\r?\n/);
+    buffer = flush ? "" : blocks.pop() ?? "";
+    const candidates = flush ? blocks.filter(Boolean) : blocks;
+    for (const block of candidates) {
+      const data = block
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trimStart())
+        .join("\n");
+      inspectData(data || (flush ? block.replace(/^data:\s?/u, "") : ""));
+    }
+  };
+
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { value, done } = await upstream.read();
+        if (value) {
+          buffer += decoder.decode(value, { stream: !done });
+          inspectBuffer(false);
+          controller.enqueue(value);
+        }
+        if (!done) return;
+        buffer += decoder.decode();
+        inspectBuffer(true);
+        controller.close();
+        await record();
+      } catch (error) {
+        failed = true;
+        controller.error(error);
+        await record();
+      }
+    },
+    async cancel() {
+      cancelled = true;
+      await upstream.cancel().catch(() => undefined);
+      await record();
+    },
+  });
+
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+};
+
 const consumeToolAwareModelStream = async (
   stream: ReadableStream,
   onEvent: (event: ModelStreamEvent) => void,
@@ -1498,6 +1616,7 @@ const handleToolChat = (
         let jobId: string | undefined;
         let imageModel = selectedImageModel;
         let references: PreparedImageReference[] = [];
+        const imageStartedAt = Date.now();
         try {
           references = await selectImageReferences(
             request,
@@ -1600,12 +1719,24 @@ const handleToolChat = (
             image = await generateImage(ai, imageModel.id, prompt, aspectRatio, operation, references);
           }
           imageInvocationSucceeded = true;
+          await recordModelTelemetry(env, {
+            feature: "image",
+            modelId: imageModel.id,
+            success: true,
+            durationMs: image.elapsedMs ?? Date.now() - imageStartedAt,
+          });
           await recordAnalyticsEvent(env, getClientId(request), "image");
           send({ generated_image: image });
           return `Image generated successfully with ${image.modelName} at ${image.width}x${image.height} (seed ${image.seed}). ` +
             "The image is already visible to the user. Briefly confirm completion without embedding image data.";
         } catch (error) {
           imageInvocationFailed = true;
+          await recordModelTelemetry(env, {
+            feature: "image",
+            modelId: imageModel.id,
+            success: false,
+            durationMs: Date.now() - imageStartedAt,
+          });
           await recordAnalyticsEvent(env, getClientId(request), "error");
           console.error("Workers AI image generation failed", {
             model: imageModel.id,
@@ -1760,6 +1891,7 @@ const handleTts = async (request: Request, env: Env): Promise<Response> => {
     : { text, speaker: "luna", encoding: "mp3" };
   const resolvedAi = await resolveAiForRequest(request, env);
   if (!resolvedAi.ok) return resolvedAi.response;
+  const startedAt = Date.now();
 
   try {
     let result: unknown;
@@ -1773,10 +1905,26 @@ const handleTts = async (request: Request, env: Env): Promise<Response> => {
         await new Promise((resolve) => setTimeout(resolve, 160 * (attempt + 1)));
       }
     }
-    await recordAnalyticsEvent(env, getClientId(request), "tts");
+    await Promise.all([
+      recordAnalyticsEvent(env, getClientId(request), "tts"),
+      recordModelTelemetry(env, {
+        feature: "tts",
+        modelId: model,
+        success: true,
+        durationMs: Date.now() - startedAt,
+      }),
+    ]);
     return normalizeAudioResponse(result, model, language);
   } catch (error) {
-    await recordAnalyticsEvent(env, getClientId(request), "error");
+    await Promise.all([
+      recordAnalyticsEvent(env, getClientId(request), "error"),
+      recordModelTelemetry(env, {
+        feature: "tts",
+        modelId: model,
+        success: false,
+        durationMs: Date.now() - startedAt,
+      }),
+    ]);
     const message = error instanceof Error ? error.message : "Workers AI speech generation failed.";
     console.error("Workers AI speech generation failed", { model, language, message });
     return apiError(
@@ -1847,10 +1995,13 @@ const handleChat = async (request: Request, env: Env): Promise<Response> => {
       : 0.6;
   const maxTokens = clampOutputTokens(body.maxTokens, getOutputTokenPolicyForModel(body.model));
   const resolvedAi = await resolveAiForRequest(request, env);
-  if (!resolvedAi.ok) return resolvedAi.response;
+  if (!resolvedAi.ok) {
+    await recordModelTelemetry(env, { feature: "chat", modelId: body.model, success: false });
+    return resolvedAi.response;
+  }
 
   if (supportsTools) {
-    return handleToolChat(
+    return instrumentModelResponse(handleToolChat(
       request,
       env,
       resolvedAi.ai,
@@ -1863,7 +2014,7 @@ const handleChat = async (request: Request, env: Env): Promise<Response> => {
       maxTokens,
       imageModelId as string,
       imageReferences,
-    );
+    ), env, body.model);
   }
 
   try {
@@ -1877,15 +2028,20 @@ const handleChat = async (request: Request, env: Env): Promise<Response> => {
     const headers = sseHeaders();
 
     if (result instanceof ReadableStream) {
-      return new Response(result, { headers });
+      return instrumentModelResponse(new Response(result, { headers }), env, body.model);
     }
 
     const payload =
       result && typeof result === "object" && "response" in result
         ? result
         : { response: typeof result === "string" ? result : JSON.stringify(result) };
-    return new Response(`data: ${JSON.stringify(payload)}\n\ndata: [DONE]\n\n`, { headers });
+    return instrumentModelResponse(
+      new Response(`data: ${JSON.stringify(payload)}\n\ndata: [DONE]\n\n`, { headers }),
+      env,
+      body.model,
+    );
   } catch (error) {
+    await recordModelTelemetry(env, { feature: "chat", modelId: body.model, success: false });
     const message = error instanceof Error ? error.message : "Workers AI inference failed.";
     console.error("Workers AI inference failed", {
       model: body.model,

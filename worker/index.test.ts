@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import worker, { ChatSession } from "./index";
-import { hasAdminAccount } from "./admin-stats";
+import {
+  hasAdminAccount,
+  normalizeTokenUsage,
+  recordModelTelemetry,
+} from "./admin-stats";
 
 const pixel = "data:image/png;base64,iVBORw0KGgo=";
 const chatModel = "@cf/zai-org/glm-4.7-flash";
@@ -214,9 +218,55 @@ describe("private admin metrics", () => {
     expect(response.status).toBe(204);
     expect(waitUntil).toHaveBeenCalledOnce();
     expect(batch).toHaveBeenCalledTimes(2);
-    expect(prepared).toHaveLength(7);
-    expect(prepared[4].bindings[0]).toMatch(/^[a-f0-9]{64}$/);
-    expect(prepared[4].bindings[0]).not.toBe("browser-client-1234");
+    expect(prepared).toHaveLength(8);
+    expect(prepared[5].bindings[0]).toMatch(/^[a-f0-9]{64}$/);
+    expect(prepared[5].bindings[0]).not.toBe("browser-client-1234");
+  });
+
+  it("normalizes common Workers AI usage formats", () => {
+    expect(normalizeTokenUsage({
+      prompt_tokens: 120,
+      completion_tokens: 42,
+      prompt_tokens_details: { cached_tokens: 24 },
+    })).toEqual({ inputTokens: 120, outputTokens: 42, cachedInputTokens: 24 });
+    expect(normalizeTokenUsage({ input_tokens: 8, output_tokens: 3, cached_input_tokens: 2 }))
+      .toEqual({ inputTokens: 8, outputTokens: 3, cachedInputTokens: 2 });
+  });
+
+  it("records aggregate model telemetry without message content", async () => {
+    const prepared: Array<{ query: string; bindings: unknown[]; run: ReturnType<typeof vi.fn> }> = [];
+    const prepare = vi.fn((query: string) => {
+      const statement = {
+        query,
+        bindings: [] as unknown[],
+        run: vi.fn(async () => ({ success: true })),
+        bind: (...bindings: unknown[]) => {
+          statement.bindings = bindings;
+          return statement;
+        },
+      };
+      prepared.push(statement);
+      return statement;
+    });
+    const database = { prepare, batch: vi.fn(async () => []) };
+
+    await recordModelTelemetry({ METRICS_DB: database } as never, {
+      feature: "chat",
+      modelId: chatModel,
+      success: true,
+      durationMs: 2_400,
+      firstTokenMs: 350,
+      inputTokens: 120,
+      outputTokens: 42,
+      cachedInputTokens: 20,
+      toolCalls: 1,
+      toolSuccesses: 1,
+    });
+
+    const insert = prepared.find((statement) => statement.query.includes("INSERT INTO model_stats"));
+    expect(insert?.run).toHaveBeenCalledOnce();
+    expect(insert?.bindings).toEqual(expect.arrayContaining(["chat", chatModel, 2_400, 350, 120, 42, 20]));
+    expect(JSON.stringify(insert?.bindings)).not.toContain("Write a useful answer");
   });
 });
 
