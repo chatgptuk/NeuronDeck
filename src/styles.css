@@ -639,10 +639,10 @@ input:focus-visible {
 .image-generation-status > i span { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); animation: pulse 1.15s ease-in-out infinite; }
 .image-generation-status > i span:nth-child(2) { animation-delay: 120ms; }
 .image-generation-status > i span:nth-child(3) { animation-delay: 240ms; }
-.generated-image-grid { display: grid; width: min(700px, 100%); gap: 12px; margin: 0 0 18px; }
+.generated-image-grid { display: grid; width: min(700px, 100%); align-items: start; gap: 12px; margin: 0 0 18px; }
 .generated-image-grid.multi { width: min(920px, 100%); grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.generated-image { position: relative; margin: 0; border: 1px solid rgba(43, 61, 52, 0.13); border-radius: 18px; background: #dfe5df; box-shadow: 0 16px 40px rgba(34, 50, 41, 0.12); overflow: hidden; }
-.generated-image > img { display: block; width: 100%; max-height: 720px; object-fit: contain; }
+.generated-image { position: relative; align-self: start; margin: 0; border: 1px solid rgba(43, 61, 52, 0.13); border-radius: 18px; background: #dfe5df; box-shadow: 0 16px 40px rgba(34, 50, 41, 0.12); overflow: hidden; }
+.generated-image > img { display: block; width: 100%; height: auto; max-height: 720px; object-fit: contain; }
 .generated-image figcaption { position: absolute; display: flex; align-items: flex-end; gap: 14px; right: 0; bottom: 0; left: 0; padding: 54px 14px 14px; background: linear-gradient(transparent, rgba(16, 24, 20, 0.78)); color: #f8fbf9; }
 .generated-image figcaption > span:first-child { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 3px; }
 .generated-image figcaption strong { display: flex; align-items: center; gap: 7px; font-size: 10px; font-weight: 680; }
