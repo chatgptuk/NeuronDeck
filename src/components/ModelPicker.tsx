@@ -9,12 +9,13 @@ import {
   Wrench,
   X,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useState } from "react";
 import { getCapabilityLabel, getModelDescription, translations, type Language } from "../i18n";
 import { formatContextWindow, formatPrice, searchModels, sortModelsByPrice } from "../lib/models";
 import type { ModelInfo } from "../types";
 import { ContextGlyph } from "./ProductIcons";
 import { ProviderLogo } from "./ProviderLogo";
+import { isDialogBackdropClick, useModalDialog } from "../lib/use-modal-dialog";
 
 type Filter = "all" | "reasoning" | "vision" | "tools" | "paid" | "lora";
 
@@ -49,6 +50,10 @@ export function ModelPicker({
   onClose,
 }: ModelPickerProps) {
   const t = translations[language].picker;
+  const dialogRef = useModalDialog(true);
+  useLayoutEffect(() => {
+    dialogRef.current?.querySelector<HTMLInputElement>('input[type="search"]')?.focus();
+  }, [dialogRef]);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const visibleModels = useMemo(() => {
@@ -61,13 +66,13 @@ export function ModelPicker({
   }, [models, query, filter, favoriteIds, language]);
 
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <section
+      <dialog
+        ref={dialogRef}
         aria-label={t.dialogLabel}
         aria-modal="true"
         className="model-picker"
-        role="dialog"
-        onMouseDown={(event) => event.stopPropagation()}
+        onCancel={onClose}
+        onClick={(event) => { if (isDialogBackdropClick(event)) onClose(); }}
       >
         <header className="picker-header">
           <div>
@@ -105,6 +110,7 @@ export function ModelPicker({
               className={filter === item ? "filter-pill active" : "filter-pill"}
               key={item}
               onClick={() => setFilter(item)}
+              aria-pressed={filter === item}
               type="button"
             >
               {t.filters[item]}
@@ -117,8 +123,9 @@ export function ModelPicker({
             <article
               className={selectedId === model.id ? "model-card selected" : "model-card"}
               key={model.id}
-              onClick={() => onSelect(model.id)}
             >
+              <button type="button" className="model-select" aria-pressed={selectedId === model.id}
+                aria-label={model.name} onClick={() => onSelect(model.id)} />
               <div className="model-card-top">
                 <div className="provider-mark" title={model.provider}>
                   <ProviderLogo provider={model.provider} fallbackClassName="provider-fallback-glyph" />
@@ -168,7 +175,6 @@ export function ModelPicker({
           <span>{t.modelCount(visibleModels.length, models.length)}</span>
           <span>{t.catalogSynced(new Date(syncedAt).toLocaleDateString(language === "zh" ? "zh-CN" : "en"))}</span>
         </footer>
-      </section>
-    </div>
+      </dialog>
   );
 }

@@ -257,6 +257,9 @@ export function Admin() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
+    document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.setAttribute(
+      "content", theme === "dark" ? "#1c1c1e" : "#f5f5f7",
+    );
     document.documentElement.lang = language === "zh" ? "zh-CN" : "en";
     document.title = language === "zh" ? "模型健康与成本中心 · NeuronDeck" : "Model health & cost center · NeuronDeck";
     localStorage.setItem("neurondeck-theme-v2", theme);

@@ -1,5 +1,6 @@
 import {
   Archive,
+  ArrowUp,
   AudioLines,
   Bell,
   BookOpen,
@@ -11,17 +12,16 @@ import {
   Languages,
   LoaderCircle,
   LogOut,
-  Menu,
   MessageSquareText,
   MoreHorizontal,
   Moon,
-  PanelRight,
+  PanelLeft,
   Paperclip,
   Pause,
   Pencil,
-  Plus,
   RefreshCw,
-  Send,
+  Settings,
+  SquarePen,
   Settings2,
   Square,
   Sun,
@@ -123,6 +123,7 @@ import {
   UserGlyph,
 } from "./components/ProductIcons";
 import { ProviderLogo } from "./components/ProviderLogo";
+import { isDialogBackdropClick, useModalDialog } from "./lib/use-modal-dialog";
 
 const MarkdownMessage = lazy(() =>
   import("./components/MarkdownMessage").then((module) => ({ default: module.MarkdownMessage })),
@@ -249,7 +250,10 @@ function App() {
   const [generating, setGenerating] = useState(false);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<"general" | "media" | "account">("general");
+  const inspectorRef = useModalDialog(inspectorOpen);
   const [cloudflareAuth, setCloudflareAuth] = useState<CloudflareAuthStatus>({
     configured: false,
     authenticated: false,
@@ -464,7 +468,7 @@ function App() {
     document.documentElement.dataset.theme = theme;
     document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.setAttribute(
       "content",
-      theme === "dark" ? "#19221e" : "#edf1eb",
+      theme === "dark" ? "#1c1c1e" : "#f5f5f7",
     );
     localStorage.setItem("neurondeck-theme-v2", theme);
   }, [theme]);
@@ -541,8 +545,7 @@ function App() {
         event.preventDefault();
         setModelPickerOpen(true);
       }
-      if (event.key === "Escape") {
-        setModelPickerOpen(false);
+      if (event.key === "Escape" && !document.querySelector("dialog[open]")) {
         setSidebarOpen(false);
       }
     };
@@ -1430,7 +1433,7 @@ function App() {
       : title;
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
       {sidebarOpen && <button className="mobile-scrim" aria-label={t.closeSidebar} onClick={() => setSidebarOpen(false)} />}
       <aside className={sidebarOpen ? "sidebar open" : "sidebar"}>
         <div className="brand-row">
@@ -1445,7 +1448,7 @@ function App() {
         </div>
 
         <button className="new-chat-button" onClick={newConversation} type="button">
-          <Plus size={17} />
+          <SquarePen size={18} />
           {t.newConversation}
           <span>⌘ N</span>
         </button>
@@ -1503,18 +1506,21 @@ function App() {
 
       <main className="main-panel">
         <header className="topbar">
-          <button className="icon-button mobile-menu" onClick={() => setSidebarOpen(true)} aria-label={t.openSidebar}>
-            <Menu size={20} />
+          <button className="icon-button sidebar-toggle" onClick={() => {
+            if (window.matchMedia("(max-width: 780px)").matches) setSidebarOpen(true);
+            else setSidebarCollapsed((current) => !current);
+          }} aria-label={sidebarCollapsed ? t.openSidebar : t.toggleSidebar} title={t.toggleSidebar}>
+            <PanelLeft size={20} />
           </button>
           <button className="model-trigger" onClick={() => setModelPickerOpen(true)} type="button">
             <span className="active-model-mark"><ProviderLogo provider={activeModel.provider} /></span>
-            <span><small>{activeModel.provider}</small>{activeModel.name}</span>
+            <span><small>{activeModel.provider}</small><strong>{activeModel.name}</strong></span>
             <ChevronDown size={16} />
           </button>
           <div className="topbar-actions">
             <button
               className={cloudflareAuth.authenticated ? "cloud-account-button connected" : "cloud-account-button"}
-              onClick={() => setInspectorOpen(true)}
+              onClick={() => { setSettingsTab("account"); setInspectorOpen(true); }}
               aria-label={t.cloudflareAccount}
               title={cloudflareAuth.authenticated && !cloudflareAuth.usesSiteQuota ? cloudflareAuth.activeAccountName : siteQuotaLabel}
               type="button"
@@ -1546,7 +1552,7 @@ function App() {
               aria-label={t.toggleInspector}
               type="button"
             >
-              <PanelRight size={18} />
+              <Settings size={19} />
             </button>
           </div>
         </header>
@@ -1556,7 +1562,7 @@ function App() {
             <div className="message-scroll">
               {activeConversation.messages.length === 0 ? (
                 <div className="welcome-state">
-                  <div className="welcome-orbit"><NeuronGlyph /></div>
+                  <div className="welcome-orbit" aria-hidden="true"><NeuronGlyph /></div>
                   <span className="eyebrow">{t.welcomeEyebrow}</span>
                   <h1>{t.welcomeTitle}</h1>
                   <p>{t.welcomeDescription}</p>
@@ -1564,13 +1570,13 @@ function App() {
                     {t.starterPrompts.map((item, index) => {
                       const StarterIcon = STARTER_ICONS[index % STARTER_ICONS.length];
                       return (
-                        <button key={item.label} type="button" onClick={() => {
+                        <button className={`starter-${index}`} key={item.label} type="button" onClick={() => {
                           setComposer(item.prompt);
                           window.setTimeout(() => composerEditorRef.current?.focus(), 0);
                         }}>
                           <span className="starter-icon"><StarterIcon /></span>
                           <strong>{item.label}</strong>
-                          <span className="starter-prompt">{item.prompt}</span>
+                          <span className="starter-prompt">{item.description}</span>
                         </button>
                       );
                     })}
@@ -1584,7 +1590,7 @@ function App() {
                         {message.role === "user" ? (
                           <div className="avatar user-avatar"><UserGlyph /></div>
                         ) : (
-                          <div className="avatar ai-avatar"><NeuronGlyph /></div>
+                          <div className="avatar ai-avatar"><ProviderLogo provider={getModel(models, message.modelId ?? activeModel.id).provider} /></div>
                         )}
                         <div>
                           <strong>{message.role === "user" ? t.you : getModel(models, message.modelId ?? activeModel.id).name}</strong>
@@ -1802,7 +1808,7 @@ function App() {
                       }
                       type="button"
                       aria-label={t.sendMessage}
-                    ><Send size={17} /></button>
+                    ><ArrowUp size={21} /></button>
                   )}
                 </div>
               </div>
@@ -1812,17 +1818,35 @@ function App() {
             </div>
           </section>
 
-          <aside className={inspectorOpen ? "inspector open" : "inspector"}>
+          <dialog ref={inspectorRef} className="inspector" aria-label={t.settings}
+            onCancel={() => setInspectorOpen(false)}
+            onClick={(event) => { if (isDialogBackdropClick(event)) setInspectorOpen(false); }}>
             <div className="inspector-header">
-              <div><span className="eyebrow">{t.modelInspector}</span><h2>{activeModel.name}</h2></div>
+              <div><h2>{t.settings}</h2></div>
               <button className="icon-button" onClick={() => setInspectorOpen(false)} aria-label={t.closeInspector}><X size={17} /></button>
             </div>
+            <div className="settings-tabs" aria-label={t.settings}>
+              {(["general", "media", "account"] as const).map((tab) => (
+                <button key={tab} type="button" aria-pressed={settingsTab === tab}
+                  className={settingsTab === tab ? "active" : ""} onClick={() => setSettingsTab(tab)}>
+                  {tab === "general" ? t.settingsGeneral : tab === "media" ? t.settingsMedia : t.settingsAccount}
+                </button>
+              ))}
+            </div>
+            <div hidden={settingsTab !== "general"}>
+            <button className="settings-model" type="button" onClick={() => setModelPickerOpen(true)}>
+              <span className="provider-mark"><ProviderLogo provider={activeModel.provider} /></span>
+              <span><strong>{activeModel.name}</strong><small>{activeModel.provider}</small></span>
+              <ChevronDown size={16} />
+            </button>
             <p className="inspector-description">{getModelDescription(activeModel, language)}</p>
             <div className="inspector-stats">
               <div><span>{t.context}</span><strong>{formatContextWindow(activeModel.contextWindow, language).replace(language === "zh" ? " 上下文" : " context", "")}</strong></div>
               <div><span>{t.inputPerMillion}</span><strong>{formatPrice(activeModel.prices.input)}</strong></div>
               <div><span>{t.outputPerMillion}</span><strong>{formatPrice(activeModel.prices.output)}</strong></div>
             </div>
+            </div>
+            <div hidden={settingsTab !== "account"}>
             <div className="inspector-section cloudflare-account-section">
               <span className="section-title"><Cloud size={15} />{t.cloudflareAccount}</span>
               <div className={cloudflareAuth.authenticated ? "cloudflare-account-card connected" : "cloudflare-account-card"}>
@@ -1895,6 +1919,8 @@ function App() {
                 </button>
               </div>
             </div>
+            </div>
+            <div hidden={settingsTab !== "general"}>
             <div className="inspector-section">
               <label htmlFor="system-prompt"><Settings2 size={14} />{t.systemPrompt}</label>
               <textarea
@@ -1957,6 +1983,8 @@ function App() {
                 >{t.resetOutputTokens}</button>
               </div>
             </div>
+            </div>
+            <div hidden={settingsTab !== "media"}>
             <div className="inspector-section speech-model-section">
               <span className="section-title"><AudioLines />{t.speechModel}</span>
               <p>{t.speechModelDescription}</p>
@@ -2033,6 +2061,8 @@ function App() {
                 </div>
               </div>
             ) : null}
+            </div>
+            <div hidden={settingsTab !== "general"}>
             <div className="inspector-section">
               <span className="section-title">{t.capabilities}</span>
               <div className="inspector-capabilities">
@@ -2042,7 +2072,8 @@ function App() {
               </div>
             </div>
             <button className="change-model" onClick={() => setModelPickerOpen(true)} type="button">{t.browseAllModels(models.length)}<ChevronDown size={15} /></button>
-          </aside>
+            </div>
+          </dialog>
         </div>
       </main>
 

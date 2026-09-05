@@ -14,12 +14,8 @@ const sharedProps = {
 export function NeuronGlyph({ className, ...props }: ProductIconProps) {
   return (
     <svg {...sharedProps} {...props} className={className} viewBox="0 0 24 24">
-      <path d="M5.3 7.2c3.7-3.4 9.5-3.1 13 .5 3.2 3.4 2.6 8.2-.8 10.7-3.5 2.7-8.6 1.7-11-1.9-2.2-3.2-1.7-7 .7-9.2" strokeWidth="1.35" />
-      <path d="m6.7 8 10.4 9.4M17.7 8.4 7.2 15.8" opacity=".42" strokeWidth="1.1" />
-      <circle cx="5.4" cy="7.2" fill="currentColor" r="1.7" stroke="none" />
-      <circle cx="18.4" cy="7.9" fill="currentColor" r="1.7" stroke="none" />
-      <circle cx="17.8" cy="18.1" fill="currentColor" r="1.7" stroke="none" />
-      <circle cx="6.7" cy="16.7" fill="currentColor" r="1.7" stroke="none" />
+      <rect x="4" y="7" width="10" height="13" rx="5" strokeWidth="1.8" />
+      <rect x="10" y="4" width="10" height="13" rx="5" strokeWidth="1.8" />
     </svg>
   );
 }
@@ -27,10 +23,8 @@ export function NeuronGlyph({ className, ...props }: ProductIconProps) {
 export function UserGlyph({ className, ...props }: ProductIconProps) {
   return (
     <svg {...sharedProps} {...props} className={className} viewBox="0 0 24 24">
-      <path d="M4.8 10.8c.2-4.7 3.4-8 7.8-8 3.5 0 6.1 1.8 7 4.7" opacity=".34" strokeWidth="1.15" />
-      <circle cx="12" cy="8.3" r="3" strokeWidth="1.4" />
-      <path d="M6.6 19.7c.4-4.2 2.3-6.3 5.4-6.3s5 2.1 5.4 6.3" strokeWidth="1.45" />
-      <circle cx="19.2" cy="6.3" fill="currentColor" r="1.35" stroke="none" />
+      <circle cx="12" cy="8" r="3.5" strokeWidth="1.7" />
+      <path d="M5.5 20v-1a6.5 6.5 0 0 1 13 0v1" strokeWidth="1.7" />
     </svg>
   );
 }
@@ -58,8 +52,7 @@ export function IdeaGlyph({ className, ...props }: ProductIconProps) {
 export function CodeGlyph({ className, ...props }: ProductIconProps) {
   return (
     <svg {...sharedProps} {...props} className={className} viewBox="0 0 24 24">
-      <path d="m8.4 5.2-5 6.8 5 6.8M15.6 5.2l5 6.8-5 6.8M13.7 3.8 10.3 20.2" strokeWidth="1.5" />
-      <circle cx="12" cy="12" fill="currentColor" r="1.15" stroke="none" />
+      <path d="m8 7-5 5 5 5m8-10 5 5-5 5M14 4l-4 16" strokeWidth="1.7" />
     </svg>
   );
 }
@@ -78,8 +71,7 @@ export function CreationGlyph({ className, ...props }: ProductIconProps) {
   return (
     <svg {...sharedProps} {...props} className={className} viewBox="0 0 24 24">
       <path d="M11.2 3.1c.2 4.8 2.7 7.3 7.6 7.6-4.9.3-7.4 2.8-7.6 7.6-.2-4.8-2.7-7.3-7.6-7.6 4.9-.3 7.4-2.8 7.6-7.6Z" strokeWidth="1.35" />
-      <circle cx="18.7" cy="4.8" fill="currentColor" r="1.4" stroke="none" />
-      <circle cx="19.3" cy="18.6" fill="currentColor" opacity=".55" r=".9" stroke="none" />
+      <path d="M19 2v5m-2.5-2.5h5" strokeWidth="1.5" />
     </svg>
   );
 }
