@@ -1,5 +1,5 @@
 {
-  "syncedAt": "2026-08-27T00:46:29.701Z",
+  "syncedAt": "2026-09-05T07:15:40.000Z",
   "source": "Cloudflare Workers AI model catalog — Text Generation, excluding safety classifiers",
   "models": [
     {
@@ -104,6 +104,24 @@
       "prices": {
         "input": 0.152,
         "output": 0.287
+      }
+    },
+    {
+      "id": "@cf/zai-org/glm-5.3",
+      "name": "GLM 5.3",
+      "provider": "Z.ai",
+      "description": "Z.ai's flagship agentic coding model with a long context window, reasoning, function calling, and structured outputs for multi-step development workflows.",
+      "contextWindow": 1310720,
+      "capabilities": [
+        "reasoning",
+        "tools"
+      ],
+      "paid": true,
+      "lora": false,
+      "prices": {
+        "input": 1.4,
+        "output": 4.4,
+        "cachedInput": 0.26
       }
     },
     {

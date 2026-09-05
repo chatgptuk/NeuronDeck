@@ -15,7 +15,7 @@ describe("Cloudflare-hosted chat catalog", () => {
   });
 
   it("contains the complete synced chat catalog without the safety classifier", () => {
-    expect(FALLBACK_MODELS).toHaveLength(29);
+    expect(FALLBACK_MODELS).toHaveLength(30);
     expect(FALLBACK_MODELS.every((model) => model.id.startsWith("@cf/"))).toBe(true);
     expect(FALLBACK_MODELS.some((model) => model.id.includes("llama-guard"))).toBe(false);
     expect(FALLBACK_MODELS.find((model) => model.id === "@cf/zai-org/glm-5.3-flash")).toMatchObject({
@@ -23,6 +23,13 @@ describe("Cloudflare-hosted chat catalog", () => {
       capabilities: ["reasoning", "tools", "vision"],
       paid: true,
     });
+  });
+
+  it("exposes GLM 5.3 as a distinct text and tool model without enabling image uploads", () => {
+    const model = searchModels(FALLBACK_MODELS, "glm-5.3", "tools")
+      .find((model) => model.id === "@cf/zai-org/glm-5.3");
+    expect(model).toMatchObject({ name: "GLM 5.3", provider: "Z.ai", paid: true });
+    expect(model && supportsMultimodalAttachments(model)).toBe(false);
   });
 
   it("finds models by provider and capability", () => {

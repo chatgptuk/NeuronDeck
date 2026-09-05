@@ -431,6 +431,7 @@ const modelDescriptionsZh: Record<string, string> = {
   "@cf/meta/llama-3.1-8b-instruct-fp8": "适合日常对话的均衡型量化指令模型。",
   "@cf/meta/llama-3.2-1b-instruct": "适合轻量对话任务的高速多语言模型。",
   "@cf/moonshotai/kimi-k2.6": "支持长上下文推理与工具调用的前沿多模态模型。",
+  "@cf/zai-org/glm-5.3": "智谱旗舰级智能体编程模型，支持超长上下文、推理、工具调用和结构化输出，适合多步骤开发任务。",
   "@cf/zai-org/glm-5.3-flash": "拥有超长上下文、视觉理解和工具调用能力的高性价比旗舰级 MoE 模型。",
   "@cf/zai-org/glm-4.7-flash": "支持多轮工具调用的高速多语言对话与指令模型。",
   "@cf/meta-llama/llama-2-7b-chat-hf-lora": "支持 LoRA、面向对话优化的 Llama 2 模型。",

@@ -671,6 +671,18 @@ describe("worker multimodal requests", () => {
 });
 
 describe("worker output token policy", () => {
+  it("accepts GLM 5.3 with the long-context default output budget", async () => {
+    const { env, run } = createEnv();
+    const model = "@cf/zai-org/glm-5.3";
+    const response = await worker.fetch(textRequestFor(model), env as never);
+    await response.text();
+    expect(response.status).toBe(200);
+    expect(run.mock.calls.at(-1)).toEqual([
+      model,
+      expect.objectContaining({ max_tokens: 32_768, stream: true }),
+    ]);
+  });
+
   it("uses the context-aware default for a 128K model", async () => {
     const { env, run } = createEnv();
     await worker.fetch(textRequestFor("@cf/zai-org/glm-4.7-flash"), env as never);
@@ -1833,8 +1845,7 @@ describe("image generation function calling", () => {
     expect(body).not.toContain("Internal application context");
     expect(body).not.toContain("Retained image-tool context");
   });
-  it("treats an image style change phrased with 改为 as a GLM 5.3 tool call", async () => {
-    const glm53Model = "@cf/zai-org/glm-5.3-flash";
+  it.each(["@cf/zai-org/glm-5.3-flash", "@cf/zai-org/glm-5.3"])("executes an image style tool call and resumes the reply with %s", async (glm53Model) => {
     const calls: Array<{ model: string; input: Record<string, unknown> }> = [];
     const ai = {
       run: vi.fn(async (model: string, input: Record<string, unknown>) => {
@@ -1910,8 +1921,7 @@ describe("image generation function calling", () => {
     expect(body).toContain('"generated_image"');
     expect(body).toContain('"done":true');
   });
-  it("lets the AI answer an image-related question without a keyword fallback", async () => {
-    const glm53Model = "@cf/zai-org/glm-5.3-flash";
+  it.each(["@cf/zai-org/glm-5.3-flash", "@cf/zai-org/glm-5.3"])("lets %s stream an image-related answer without a keyword fallback", async (glm53Model) => {
     const calls: Array<{ model: string; input: Record<string, unknown> }> = [];
     const ai = {
       run: vi.fn(async (model: string, input: Record<string, unknown>) => {
